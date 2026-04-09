@@ -3,7 +3,7 @@ name: publish
 on:
   workflow_run:
     workflows: [ci]
-    branches: [main, ci-publish-image]
+    branches: [main]
     types:
       - completed
     
