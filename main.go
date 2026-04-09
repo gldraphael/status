@@ -24,6 +24,7 @@ func main() {
 	if err := run(logger); err != nil {
 		logger.Fatal().Err(err).Msg("fatal error")
 	}
+	x := 1
 }
 
 func run(logger zerolog.Logger) error {
