@@ -1,0 +1,25 @@
+# Podman Compose / Docker Compose configuration for status.
+#
+# Optional environment variables (override config.yaml values):
+#   PORT            (default: 8080)
+#   PEBBLE_PATH     (default: ./data)
+#   CALENDAR_URL    (iCal URL — required if not in config.yaml)
+#   GITHUB_TOKEN    (GitHub personal access token)
+#
+# Usage:
+#   podman compose up -d
+#   podman compose logs -f
+
+services:
+  status:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: ${PORT:-8080}
+      PEBBLE_PATH: /data
+      CALENDAR_URL: ${CALENDAR_URL}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_USERNAME: ${GITHUB_USERNAME}
+
