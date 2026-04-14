@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/forPelevin/gomoji"
 	"github.com/gldraphael/status/internal/target"
 )
 
@@ -18,8 +19,8 @@ import (
 //
 // Required token scope: user
 type Target struct {
-	token    string
-	client   *http.Client
+	token  string
+	client *http.Client
 }
 
 // NewTarget creates a GitHub target for the given personal access token.
@@ -34,6 +35,14 @@ func NewTarget(token string) *Target {
 
 // Sync implements target.Target. A nil status clears the GitHub user profile status.
 func (t *Target) Sync(ctx context.Context, st *target.Status) error {
+	if st != nil {
+		emoji, text := extractFirstEmoji(st.Text)
+		if emoji != "" {
+			st.Emoji = emoji
+			st.Text = text
+		}
+	}
+
 	mutation := buildGraphQLMutation(st)
 	payload := map[string]string{"query": mutation}
 
@@ -118,4 +127,17 @@ func escapeGraphQLString(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `"`, `\"`)
 	return fmt.Sprintf(`"%s"`, s)
+}
+
+// extractFirstEmoji returns the first emoji found in the string and the remaining text.
+func extractFirstEmoji(s string) (string, string) {
+	emojis := gomoji.CollectAll(s)
+	if len(emojis) == 0 {
+		return "", s
+	}
+
+	first := emojis[0].Character
+	// Remove ONLY the first occurrence of the emoji character.
+	rest := strings.Replace(s, first, "", 1)
+	return first, strings.TrimSpace(rest)
 }

@@ -116,7 +116,7 @@ func (s *Syncer) syncStatus(ctx context.Context) error {
 		if err := s.store.SetStatus(stored); err != nil {
 			errs = append(errs, fmt.Errorf("store status: %w", err))
 		}
-		s.logger.Info().Str("text", st.Text).Time("expiry", st.Expiration).Msg("synced status")
+		s.logger.Info().Str("emoji", st.Emoji).Str("text", st.Text).Time("expiry", st.Expiration).Msg("synced status")
 	} else {
 		if err := s.store.DeleteStatus(); err != nil {
 			errs = append(errs, fmt.Errorf("delete status: %w", err))
