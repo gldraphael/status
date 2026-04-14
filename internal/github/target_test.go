@@ -124,3 +124,49 @@ func TestNewTarget(t *testing.T) {
 		t.Errorf("http client should be initialized")
 	}
 }
+
+func TestExtractFirstEmoji(t *testing.T) {
+	tests := []struct {
+		input     string
+		wantEmoji string
+		wantText  string
+	}{
+		{
+			input:     "💡 Focusing... 🎯",
+			wantEmoji: "💡",
+			wantText:  "Focusing... 🎯",
+		},
+		{
+			input:     "🌘 Unwinding...",
+			wantEmoji: "🌘",
+			wantText:  "Unwinding...",
+		},
+		{
+			input:     "Meeting",
+			wantEmoji: "",
+			wantText:  "Meeting",
+		},
+		{
+			input:     "🚀 Rocket! 🚀",
+			wantEmoji: "🚀",
+			wantText:  "Rocket! 🚀",
+		},
+		{
+			input:     "Flag 🇺🇸 in middle",
+			wantEmoji: "🇺🇸",
+			wantText:  "Flag  in middle", // Note: double space
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			gotEmoji, gotText := extractFirstEmoji(tt.input)
+			if gotEmoji != tt.wantEmoji {
+				t.Errorf("extractFirstEmoji() gotEmoji = %v, want %v", gotEmoji, tt.wantEmoji)
+			}
+			if gotText != tt.wantText {
+				t.Errorf("extractFirstEmoji() gotText = %v, want %v", gotText, tt.wantText)
+			}
+		})
+	}
+}
