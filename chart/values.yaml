@@ -19,6 +19,11 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# Configure environment variables for the pods more information can be found here: https://kubernetes.io/docs/tasks/inject-data-application/environment-variable-expose-pod-information/
+env: []
+  # - name: EXAMPLE_ENV_VAR
+  #   value: "example-value"
+
 # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
 serviceAccount:
   # Specifies whether a service account should be created.
