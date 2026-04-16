@@ -3,6 +3,7 @@ module github.com/gldraphael/status
 go 1.25.6
 
 require (
+	github.com/arran4/golang-ical v0.3.5
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/forPelevin/gomoji v1.4.1
 	github.com/knadh/koanf/parsers/yaml v1.1.0
@@ -10,6 +11,7 @@ require (
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/v2 v2.3.4
 	github.com/rs/zerolog v1.35.0
+	github.com/teambition/rrule-go v1.8.2
 )
 
 require (

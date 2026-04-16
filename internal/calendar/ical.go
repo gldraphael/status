@@ -1,14 +1,15 @@
 package calendar
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	ics "github.com/arran4/golang-ical"
+	"github.com/teambition/rrule-go"
 )
 
 // ParsedEvent is an event extracted from an iCal file.
@@ -44,135 +45,94 @@ func FetchAndParseICalendar(ctx context.Context, calendarURL string) ([]ParsedEv
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
-	return parseICalendar(body)
+	return parseICalendar(body, time.Now())
 }
 
 // parseICalendar parses an iCal stream and extracts VEVENT components.
-func parseICalendar(data interface{}) ([]ParsedEvent, error) {
-	var body []byte
+// now is used as the center of the recurrence expansion window.
+func parseICalendar(data interface{}, now time.Time) ([]ParsedEvent, error) {
+	var body string
 	switch v := data.(type) {
 	case []byte:
+		body = string(v)
+	case string:
 		body = v
-	case *bytes.Buffer:
-		body = v.Bytes()
 	default:
 		return nil, fmt.Errorf("unsupported data type")
 	}
 
-	// First, read all lines and unfold continuation lines
-	scanner := bufio.NewScanner(bytes.NewReader(body))
-	var lines []string
-	var currentLine strings.Builder
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// If this line starts with space/tab, it's a continuation
-		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
-			currentLine.WriteString(strings.TrimSpace(line))
-		} else {
-			// Not a continuation; flush current line if any
-			if currentLine.Len() > 0 {
-				lines = append(lines, currentLine.String())
-				currentLine.Reset()
-			}
-			lines = append(lines, line)
-		}
-	}
-	// Flush any remaining line
-	if currentLine.Len() > 0 {
-		lines = append(lines, currentLine.String())
+	if now.IsZero() {
+		now = time.Now()
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read lines: %w", err)
+	cal, err := ics.ParseCalendar(strings.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("parse calendar: %w", err)
 	}
 
-	// Now process the unfolded lines
 	var events []ParsedEvent
-	var inEvent bool
-	var event ParsedEvent
-	var eventStart, eventEnd string
+	// Expand recurrences for a window around now.
+	windowStart := now.Add(-24 * time.Hour)
+	windowEnd := now.Add(24 * time.Hour)
 
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, event := range cal.Events() {
+		summary := event.GetProperty(ics.ComponentPropertySummary).Value
+		uid := event.GetProperty(ics.ComponentPropertyUniqueId).Value
+		status := event.GetProperty(ics.ComponentPropertyStatus)
+		cancelled := status != nil && status.Value == "CANCELLED"
+
+		startAt, err := event.GetStartAt()
+		if err != nil {
+			continue
+		}
+		endAt, err := event.GetEndAt()
+		if err != nil {
+			continue
+		}
+		duration := endAt.Sub(startAt)
+
+		rruleProp := event.GetProperty(ics.ComponentPropertyRrule)
+		if rruleProp == nil {
+			// Single event.
+			events = append(events, ParsedEvent{
+				ID:        uid,
+				Summary:   summary,
+				StartTime: startAt,
+				EndTime:   endAt,
+				Cancelled: cancelled,
+			})
 			continue
 		}
 
-		if line == "BEGIN:VEVENT" {
-			inEvent = true
-			event = ParsedEvent{}
-			eventStart = ""
-			eventEnd = ""
-			continue
-		}
-		if line == "END:VEVENT" {
-			inEvent = false
-			// Parse timestamps if they were collected.
-			if eventStart != "" {
-				if t, err := parseEventTime(eventStart); err == nil {
-					event.StartTime = t
+		// Recurring event.
+		option, err := rrule.StrToROption(rruleProp.Value)
+		if err == nil {
+			option.Dtstart = startAt
+			rule, err := rrule.NewRRule(*option)
+			if err == nil {
+				instances := rule.Between(windowStart, windowEnd, true)
+				for _, inst := range instances {
+					events = append(events, ParsedEvent{
+						ID:        fmt.Sprintf("%s-%s", uid, inst.Format(time.RFC3339)),
+						Summary:   summary,
+						StartTime: inst,
+						EndTime:   inst.Add(duration),
+						Cancelled: cancelled,
+					})
 				}
+				continue
 			}
-			if eventEnd != "" {
-				if t, err := parseEventTime(eventEnd); err == nil {
-					event.EndTime = t
-				}
-			}
-			if event.ID != "" && event.Summary != "" {
-				events = append(events, event)
-			}
-			continue
 		}
 
-		if !inEvent {
-			continue
-		}
-
-		// Parse event properties.
-		if strings.HasPrefix(line, "UID:") {
-			event.ID = strings.TrimPrefix(line, "UID:")
-		} else if strings.HasPrefix(line, "SUMMARY:") {
-			event.Summary = strings.TrimPrefix(line, "SUMMARY:")
-		} else if strings.HasPrefix(line, "DTSTART") {
-			// Extract the value part; ignore TZID and other params.
-			parts := strings.Split(line, ":")
-			if len(parts) >= 2 {
-				eventStart = parts[len(parts)-1]
-			}
-		} else if strings.HasPrefix(line, "DTEND") {
-			parts := strings.Split(line, ":")
-			if len(parts) >= 2 {
-				eventEnd = parts[len(parts)-1]
-			}
-		} else if line == "STATUS:CANCELLED" {
-			event.Cancelled = true
-		}
+		// Fallback to base instance.
+		events = append(events, ParsedEvent{
+			ID:        uid,
+			Summary:   summary,
+			StartTime: startAt,
+			EndTime:   endAt,
+			Cancelled: cancelled,
+		})
 	}
 
 	return events, nil
-}
-
-// parseEventTime parses an iCal DATE-TIME or DATE string.
-// Handles formats: YYYYMMDDTHHMMSSZ, YYYYMMDD, YYYYMMDDTHHMMSS
-func parseEventTime(s string) (time.Time, error) {
-	s = strings.TrimSpace(s)
-
-	// DATE-TIME with Z suffix (UTC).
-	if strings.HasSuffix(s, "Z") {
-		return time.Parse("20060102T150405Z", s)
-	}
-
-	// DATE-TIME without timezone (local).
-	if len(s) == 15 && strings.Contains(s, "T") {
-		return time.Parse("20060102T150405", s)
-	}
-
-	// DATE only.
-	if len(s) == 8 && !strings.Contains(s, "T") {
-		return time.Parse("20060102", s)
-	}
-
-	return time.Time{}, fmt.Errorf("unsupported time format: %q", s)
 }
