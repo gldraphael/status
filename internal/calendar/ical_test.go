@@ -21,7 +21,8 @@ SUMMARY:Test Event
 END:VEVENT
 END:VCALENDAR`
 
-	events, err := parseICalendar([]byte(icalData))
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
+	events, err := parseICalendar([]byte(icalData), now)
 	if err != nil {
 		t.Fatalf("parseICalendar: %v", err)
 	}
@@ -33,8 +34,8 @@ END:VCALENDAR`
 	if events[0].Summary != "Test Event" {
 		t.Errorf("Summary: got %q, want %q", events[0].Summary, "Test Event")
 	}
-	if events[0].ID != "event1@example.com" {
-		t.Errorf("ID: got %q, want %q", events[0].ID, "event1@example.com")
+	if !strings.HasPrefix(events[0].ID, "event1@example.com") {
+		t.Errorf("ID: got %q, want prefix %q", events[0].ID, "event1@example.com")
 	}
 }
 
@@ -56,7 +57,8 @@ SUMMARY:Second Event
 END:VEVENT
 END:VCALENDAR`
 
-	events, err := parseICalendar([]byte(icalData))
+	now := time.Date(2026, 4, 6, 12, 0, 0, 0, time.UTC)
+	events, err := parseICalendar([]byte(icalData), now)
 	if err != nil {
 		t.Fatalf("parseICalendar: %v", err)
 	}
@@ -85,7 +87,8 @@ STATUS:CANCELLED
 END:VEVENT
 END:VCALENDAR`
 
-	events, err := parseICalendar([]byte(icalData))
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
+	events, err := parseICalendar([]byte(icalData), now)
 	if err != nil {
 		t.Fatalf("parseICalendar: %v", err)
 	}
@@ -110,7 +113,8 @@ SUMMARY:All Day Event
 END:VEVENT
 END:VCALENDAR`
 
-	events, err := parseICalendar([]byte(icalData))
+	now := time.Date(2026, 4, 6, 12, 0, 0, 0, time.UTC)
+	events, err := parseICalendar([]byte(icalData), now)
 	if err != nil {
 		t.Fatalf("parseICalendar: %v", err)
 	}
@@ -182,45 +186,6 @@ func TestFetchAndParseICalendar_404Error(t *testing.T) {
 	}
 }
 
-func TestParseEventTime_DateTimeUTC(t *testing.T) {
-	// Test UTC datetime format (ends with Z)
-	time1, err := parseEventTime("20260406T140530Z")
-	if err != nil {
-		t.Fatalf("parseEventTime: %v", err)
-	}
-
-	if time1.Year() != 2026 || time1.Month() != 4 || time1.Day() != 6 {
-		t.Errorf("Date: got %v", time1)
-	}
-	if time1.Hour() != 14 || time1.Minute() != 5 || time1.Second() != 30 {
-		t.Errorf("Time: got %v", time1)
-	}
-}
-
-func TestParseEventTime_DateTime(t *testing.T) {
-	// Test datetime format without timezone
-	time1, err := parseEventTime("20260406T100000")
-	if err != nil {
-		t.Fatalf("parseEventTime: %v", err)
-	}
-
-	if time1.Year() != 2026 || time1.Month() != 4 || time1.Day() != 6 {
-		t.Errorf("Date: got %v", time1)
-	}
-}
-
-func TestParseEventTime_DateOnly(t *testing.T) {
-	// Test date-only format
-	time1, err := parseEventTime("20260406")
-	if err != nil {
-		t.Fatalf("parseEventTime: %v", err)
-	}
-
-	if time1.Year() != 2026 || time1.Month() != 4 || time1.Day() != 6 {
-		t.Errorf("Date: got %v", time1)
-	}
-}
-
 func TestFetchAndParseICalendar_GoogleCalendarFormat(t *testing.T) {
 	// This is the exact format from Google Calendar's iCal export
 	icalData := `BEGIN:VCALENDAR
@@ -264,12 +229,49 @@ END:VCALENDAR`
 	if events[0].Summary != "Team Meeting" {
 		t.Errorf("Summary: got %q, want %q", events[0].Summary, "Team Meeting")
 	}
-	if events[0].ID != "test-event@example.com" {
-		t.Errorf("ID: got %q, want %q", events[0].ID, "test-event@example.com")
+	if !strings.HasPrefix(events[0].ID, "test-event@example.com") {
+		t.Errorf("ID: got %q, want prefix %q", events[0].ID, "test-event@example.com")
 	}
 	if events[0].Cancelled {
 		t.Errorf("Cancelled: got true, want false")
 	}
 
 	t.Logf("✅ Successfully parsed Google Calendar iCal format")
+}
+
+func TestParseICalendar_RecurringEvents(t *testing.T) {
+	icalData := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:recurring-daily
+DTSTART:20260401T090000Z
+DTEND:20260401T100000Z
+RRULE:FREQ=DAILY
+SUMMARY:Daily Sync
+END:VEVENT
+END:VCALENDAR`
+
+	// Test a date well after the initial DTSTART to verify RRULE expansion.
+	now := time.Date(2026, 4, 15, 9, 30, 0, 0, time.UTC)
+	events, err := parseICalendar([]byte(icalData), now)
+	if err != nil {
+		t.Fatalf("parseICalendar: %v", err)
+	}
+
+	found := false
+	for _, ev := range events {
+		// The expanded event should have the same summary but a different start/end time.
+		if ev.Summary == "Daily Sync" && !ev.StartTime.After(now) && ev.EndTime.After(now) {
+			found = true
+			// Verify it's the instance for the 15th
+			if ev.StartTime.Day() != 15 {
+				t.Errorf("expected instance for the 15th, got %v", ev.StartTime)
+			}
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("expected to find active recurring instance of 'Daily Sync' for %v", now)
+	}
 }
