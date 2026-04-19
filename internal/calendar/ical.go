@@ -72,7 +72,6 @@ func parseICalendar(data interface{}, now time.Time) ([]ParsedEvent, error) {
 
 	var events []ParsedEvent
 	// Expand recurrences for a window around now.
-	windowStart := now.Add(-24 * time.Hour)
 	windowEnd := now.Add(24 * time.Hour)
 
 	for _, event := range cal.Events() {
@@ -110,6 +109,8 @@ func parseICalendar(data interface{}, now time.Time) ([]ParsedEvent, error) {
 			option.Dtstart = startAt
 			rule, err := rrule.NewRRule(*option)
 			if err == nil {
+				// Use a window that looks back far enough to catch events that are still active.
+				windowStart := now.Add(-duration)
 				instances := rule.Between(windowStart, windowEnd, true)
 				for _, inst := range instances {
 					events = append(events, ParsedEvent{
