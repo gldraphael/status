@@ -160,6 +160,14 @@ func TestListActiveEvents(t *testing.T) {
 			},
 			active: true,
 		},
+		{
+			// Multi-day event.
+			ev: store.Event{
+				ID: "multi-day", Summary: "Multi-day workshop",
+				StartTime: now.Add(-24 * time.Hour), EndTime: now.Add(24 * time.Hour),
+			},
+			active: true,
+		},
 	}
 
 	for i := range tests {

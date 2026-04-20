@@ -275,3 +275,79 @@ END:VCALENDAR`
 		t.Errorf("expected to find active recurring instance of 'Daily Sync' for %v", now)
 	}
 }
+
+func TestParseICalendar_MultiDayRecurringEvent(t *testing.T) {
+	// Event starts Monday 09:00, ends Wednesday 17:00, repeats weekly on Monday.
+	icalData := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:multi-day-recurring
+DTSTART:20260406T090000Z
+DTEND:20260408T170000Z
+RRULE:FREQ=WEEKLY;BYDAY=MO
+SUMMARY:Multi-day Workshop
+END:VEVENT
+END:VCALENDAR`
+
+	// 2026-04-06 is Monday.
+	// 2026-04-07 is Tuesday.
+	// Tuesday 12:00 is exactly in the middle of the first occurrence.
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+
+	// The current window in ical.go is now - 24h to now + 24h.
+	// now - 24h is 2026-04-06 12:00.
+	// The event started at 2026-04-06 09:00, which is BEFORE the window.
+
+	events, err := parseICalendar([]byte(icalData), now)
+	if err != nil {
+		t.Fatalf("parseICalendar: %v", err)
+	}
+
+	found := false
+	for _, ev := range events {
+		if ev.Summary == "Multi-day Workshop" {
+			if !ev.StartTime.After(now) && ev.EndTime.After(now) {
+				found = true
+				break
+			}
+		}
+	}
+
+	if !found {
+		t.Errorf("expected to find active recurring instance of 'Multi-day Workshop' for %v", now)
+	}
+	}
+
+func TestParseICalendar_MultiDaySingleEvent(t *testing.T) {
+	// Single event spanning multiple days.
+	icalData := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:multi-day-single
+DTSTART:20260406T090000Z
+DTEND:20260408T170000Z
+SUMMARY:Long Workshop
+END:VEVENT
+END:VCALENDAR`
+
+	// 2026-04-07 is Tuesday, in the middle of the event.
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+
+	events, err := parseICalendar([]byte(icalData), now)
+	if err != nil {
+		t.Fatalf("parseICalendar: %v", err)
+	}
+
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	ev := events[0]
+	if ev.Summary != "Long Workshop" {
+		t.Errorf("Summary: got %q, want %q", ev.Summary, "Long Workshop")
+	}
+
+	if ev.StartTime.After(now) || ev.EndTime.Before(now) {
+		t.Errorf("Event should be active at %v, but got StartTime=%v, EndTime=%v", now, ev.StartTime, ev.EndTime)
+	}
+}
