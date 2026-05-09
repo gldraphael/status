@@ -25,7 +25,7 @@ func TestLoad_Defaults(t *testing.T) {
 	// Work in a temp dir with no config.yaml.
 	chdir(t, t.TempDir())
 
-	for _, key := range []string{"PORT", "PEBBLE_PATH", "CALENDAR_URL", "GITHUB_TOKEN"} {
+	for _, key := range []string{"PORT", "PEBBLE_PATH", "CALENDAR_URL", "GITHUB_TOKEN", "GITHUB_USERNAME", "AVAILABILITY_IS_ENABLED", "AVAILABILITY_CALENDAR_URL", "AVAILABILITY_API_KEY"} {
 		t.Setenv(key, "")
 	}
 
@@ -42,6 +42,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.CalendarURL != "" {
 		t.Errorf("CalendarURL: got %q, want empty (no default)", cfg.CalendarURL)
 	}
+	if cfg.Availability.IsEnabled {
+		t.Error("expected availability to be disabled by default")
+	}
 }
 
 func TestLoad_FromEnv(t *testing.T) {
@@ -51,6 +54,10 @@ func TestLoad_FromEnv(t *testing.T) {
 	t.Setenv("PEBBLE_PATH", "/tmp/mydb")
 	t.Setenv("CALENDAR_URL", "https://calendar.example.com/ical.ics")
 	t.Setenv("GITHUB_TOKEN", "gh-abc123")
+	t.Setenv("GITHUB_USERNAME", "")
+	t.Setenv("AVAILABILITY_IS_ENABLED", "")
+	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
+	t.Setenv("AVAILABILITY_API_KEY", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -70,9 +77,43 @@ func TestLoad_FromEnv(t *testing.T) {
 	}
 }
 
+func TestLoad_AvailabilityFromEnv(t *testing.T) {
+	chdir(t, t.TempDir())
+
+	t.Setenv("PORT", "")
+	t.Setenv("PEBBLE_PATH", "")
+	t.Setenv("CALENDAR_URL", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_USERNAME", "")
+	t.Setenv("AVAILABILITY_IS_ENABLED", "true")
+	t.Setenv("AVAILABILITY_CALENDAR_URL", "https://availability.example.com/ical.ics")
+	t.Setenv("AVAILABILITY_API_KEY", "secret-key")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Availability.IsEnabled {
+		t.Fatal("expected availability to be enabled from env")
+	}
+	if cfg.Availability.CalendarURL != "https://availability.example.com/ical.ics" {
+		t.Errorf("Availability.CalendarURL: got %q", cfg.Availability.CalendarURL)
+	}
+	if cfg.Availability.APIKey != "secret-key" {
+		t.Errorf("Availability.APIKey: got %q", cfg.Availability.APIKey)
+	}
+}
+
 func TestLoad_InvalidPort(t *testing.T) {
 	chdir(t, t.TempDir())
+	t.Setenv("PEBBLE_PATH", "")
+	t.Setenv("CALENDAR_URL", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_USERNAME", "")
 	t.Setenv("PORT", "not-a-number")
+	t.Setenv("AVAILABILITY_IS_ENABLED", "")
+	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
+	t.Setenv("AVAILABILITY_API_KEY", "")
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for invalid PORT, got nil")
@@ -89,6 +130,9 @@ func TestLoad_FromYAML(t *testing.T) {
 	t.Setenv("CALENDAR_URL", "")
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GITHUB_USERNAME", "")
+	t.Setenv("AVAILABILITY_IS_ENABLED", "")
+	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
+	t.Setenv("AVAILABILITY_API_KEY", "")
 
 	yaml := `
 port: 7777
@@ -120,10 +164,65 @@ targets:
 	}
 }
 
+func TestLoad_AvailabilityFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	t.Setenv("PORT", "")
+	t.Setenv("PEBBLE_PATH", "")
+	t.Setenv("CALENDAR_URL", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_USERNAME", "")
+	t.Setenv("AVAILABILITY_IS_ENABLED", "")
+	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
+	t.Setenv("AVAILABILITY_API_KEY", "")
+
+	yaml := `
+availability:
+  is_enabled: true
+  calendar_url: https://availability.example.com/ical.ics
+  api_key: secret-yaml-key
+  blocks:
+    - name: First half
+      start: "09:00"
+      end: "15:00"
+    - name: Evening
+      start: "17:30"
+      end: "22:00"
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Availability.IsEnabled {
+		t.Fatal("expected availability to be enabled")
+	}
+	if cfg.Availability.CalendarURL != "https://availability.example.com/ical.ics" {
+		t.Errorf("Availability.CalendarURL: got %q", cfg.Availability.CalendarURL)
+	}
+	if cfg.Availability.APIKey != "secret-yaml-key" {
+		t.Errorf("Availability.APIKey: got %q", cfg.Availability.APIKey)
+	}
+	if len(cfg.Availability.Blocks) != 2 {
+		t.Fatalf("expected 2 blocks, got %d", len(cfg.Availability.Blocks))
+	}
+	if cfg.Availability.Blocks[0].Name != "First half" || cfg.Availability.Blocks[1].Name != "Evening" {
+		t.Errorf("unexpected blocks: %+v", cfg.Availability.Blocks)
+	}
+}
+
 func TestLoad_EnvOverridesYAML(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
 
+	t.Setenv("PEBBLE_PATH", "")
+	t.Setenv("GITHUB_USERNAME", "")
+	t.Setenv("CALENDAR_URL", "")
+	t.Setenv("GITHUB_TOKEN", "")
 	yaml := `
 port: 7777
 calendar_url: https://yaml-cal.example.com/ical.ics
@@ -139,6 +238,9 @@ targets:
 	t.Setenv("GITHUB_TOKEN", "gh-env")
 	t.Setenv("PORT", "9999")
 	t.Setenv("CALENDAR_URL", "https://env-cal.example.com/ical.ics")
+	t.Setenv("AVAILABILITY_IS_ENABLED", "")
+	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
+	t.Setenv("AVAILABILITY_API_KEY", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -155,6 +257,49 @@ targets:
 	}
 }
 
+func TestLoad_AvailabilityEnvOverridesYAML(t *testing.T) {
+	dir := t.TempDir()
+	chdir(t, dir)
+
+	t.Setenv("PORT", "")
+	t.Setenv("PEBBLE_PATH", "")
+	t.Setenv("CALENDAR_URL", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_USERNAME", "")
+
+	yaml := `
+availability:
+  is_enabled: false
+  calendar_url: https://yaml-availability.example.com/ical.ics
+  api_key: yaml-key
+  blocks:
+    - name: Morning
+      start: "09:00"
+      end: "12:00"
+`
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("AVAILABILITY_IS_ENABLED", "true")
+	t.Setenv("AVAILABILITY_CALENDAR_URL", "https://env-availability.example.com/ical.ics")
+	t.Setenv("AVAILABILITY_API_KEY", "env-key")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Availability.IsEnabled {
+		t.Fatal("expected env to enable availability")
+	}
+	if cfg.Availability.CalendarURL != "https://env-availability.example.com/ical.ics" {
+		t.Errorf("Availability.CalendarURL: got %q", cfg.Availability.CalendarURL)
+	}
+	if cfg.Availability.APIKey != "env-key" {
+		t.Errorf("Availability.APIKey: got %q", cfg.Availability.APIKey)
+	}
+}
+
 func TestLoad_YAMLOverridesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
@@ -165,6 +310,9 @@ func TestLoad_YAMLOverridesDefaults(t *testing.T) {
 	t.Setenv("CALENDAR_URL", "")
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GITHUB_USERNAME", "")
+	t.Setenv("AVAILABILITY_IS_ENABLED", "")
+	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
+	t.Setenv("AVAILABILITY_API_KEY", "")
 
 	yaml := `
 port: 3000
@@ -193,6 +341,14 @@ calendar_url: https://cal.example.com/ical.ics
 func TestLoad_MissingYAML(t *testing.T) {
 	// No config.yaml in the temp dir — should load without error.
 	chdir(t, t.TempDir())
+	t.Setenv("PORT", "")
+	t.Setenv("PEBBLE_PATH", "")
+	t.Setenv("CALENDAR_URL", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_USERNAME", "")
+	t.Setenv("AVAILABILITY_IS_ENABLED", "")
+	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
+	t.Setenv("AVAILABILITY_API_KEY", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load without config.yaml: %v", err)
@@ -200,4 +356,33 @@ func TestLoad_MissingYAML(t *testing.T) {
 	if cfg.Port != 8080 {
 		t.Errorf("Port: got %d, want 8080 (default)", cfg.Port)
 	}
+}
+
+func TestAvailabilityValidate(t *testing.T) {
+	t.Run("disabled", func(t *testing.T) {
+		if err := (AvailabilityConfig{}).Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("enabled valid", func(t *testing.T) {
+		cfg := AvailabilityConfig{
+			IsEnabled:   true,
+			CalendarURL: "https://example.com/ical.ics",
+			APIKey:      "secret",
+			Blocks: []AvailabilityBlockConfig{
+				{Name: "Morning", Start: "09:00", End: "12:00"},
+			},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("enabled incomplete", func(t *testing.T) {
+		cfg := AvailabilityConfig{IsEnabled: true}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for incomplete enabled availability config")
+		}
+	})
 }

@@ -2,12 +2,17 @@ package store
 
 // Key schema:
 //   status             → current status (single-tenant)
+//   availability       → cached availability calendar snapshot
 //   event:{eventID}    → Google Calendar event state
 //   channel:{channelID} → push notification channel registration
 //   sync:{calendarID}  → incremental sync token
 
 func statusKey() []byte {
 	return []byte("status")
+}
+
+func availabilityKey() []byte {
+	return []byte("availability")
 }
 
 func eventKey(eventID string) []byte {

@@ -5,6 +5,9 @@
 #   PEBBLE_PATH     (default: ./data)
 #   CALENDAR_URL    (iCal URL — required if not in config.yaml)
 #   GITHUB_TOKEN    (GitHub personal access token)
+#   AVAILABILITY_IS_ENABLED
+#   AVAILABILITY_CALENDAR_URL
+#   AVAILABILITY_API_KEY
 #
 # Usage:
 #   podman compose up -d
@@ -22,4 +25,6 @@ services:
       CALENDAR_URL: ${CALENDAR_URL}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       GITHUB_USERNAME: ${GITHUB_USERNAME}
-
+      AVAILABILITY_IS_ENABLED: ${AVAILABILITY_IS_ENABLED}
+      AVAILABILITY_CALENDAR_URL: ${AVAILABILITY_CALENDAR_URL}
+      AVAILABILITY_API_KEY: ${AVAILABILITY_API_KEY}

@@ -129,19 +129,22 @@ END:VCALENDAR`
 }
 
 func TestFetchAndParseICalendar_WithHTTPServer(t *testing.T) {
-	icalData := `BEGIN:VCALENDAR
-PRODID:-//Google Inc//Google Calendar 70.9054//EN
-VERSION:2.0
-CALSCALE:GREGORIAN
-METHOD:PUBLISH
-BEGIN:VEVENT
-UID:test-event@example.com
-DTSTART:20260406T140000Z
-DTEND:20260406T150000Z
-SUMMARY:Team Sync
-STATUS:CONFIRMED
-END:VEVENT
-END:VCALENDAR`
+	now := time.Now().UTC().Truncate(time.Minute)
+	start := now.Add(-time.Hour).Format("20060102T150405Z")
+	end := now.Add(time.Hour).Format("20060102T150405Z")
+	icalData := "BEGIN:VCALENDAR\n" +
+		"PRODID:-//Google Inc//Google Calendar 70.9054//EN\n" +
+		"VERSION:2.0\n" +
+		"CALSCALE:GREGORIAN\n" +
+		"METHOD:PUBLISH\n" +
+		"BEGIN:VEVENT\n" +
+		"UID:test-event@example.com\n" +
+		"DTSTART:" + start + "\n" +
+		"DTEND:" + end + "\n" +
+		"SUMMARY:Team Sync\n" +
+		"STATUS:CONFIRMED\n" +
+		"END:VEVENT\n" +
+		"END:VCALENDAR"
 
 	// Create a test server that returns text/calendar content-type
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,22 +191,25 @@ func TestFetchAndParseICalendar_404Error(t *testing.T) {
 
 func TestFetchAndParseICalendar_GoogleCalendarFormat(t *testing.T) {
 	// This is the exact format from Google Calendar's iCal export
-	icalData := `BEGIN:VCALENDAR
-PRODID:-//Google Inc//Google Calendar 70.9054//EN
-VERSION:2.0
-CALSCALE:GREGORIAN
-METHOD:PUBLISH
-X-WR-CALNAME:Status
-X-WR-TIMEZONE:Europe/London
-X-WR-CALDESC:Calendar to control my public status
-BEGIN:VEVENT
-UID:test-event@example.com
-DTSTART:20260406T140000Z
-DTEND:20260406T150000Z
-SUMMARY:Team Meeting
-STATUS:CONFIRMED
-END:VEVENT
-END:VCALENDAR`
+	now := time.Now().UTC().Truncate(time.Minute)
+	start := now.Add(-time.Hour).Format("20060102T150405Z")
+	end := now.Add(time.Hour).Format("20060102T150405Z")
+	icalData := "BEGIN:VCALENDAR\n" +
+		"PRODID:-//Google Inc//Google Calendar 70.9054//EN\n" +
+		"VERSION:2.0\n" +
+		"CALSCALE:GREGORIAN\n" +
+		"METHOD:PUBLISH\n" +
+		"X-WR-CALNAME:Status\n" +
+		"X-WR-TIMEZONE:Europe/London\n" +
+		"X-WR-CALDESC:Calendar to control my public status\n" +
+		"BEGIN:VEVENT\n" +
+		"UID:test-event@example.com\n" +
+		"DTSTART:" + start + "\n" +
+		"DTEND:" + end + "\n" +
+		"SUMMARY:Team Meeting\n" +
+		"STATUS:CONFIRMED\n" +
+		"END:VEVENT\n" +
+		"END:VCALENDAR"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Exact header from the curl example
@@ -316,7 +322,7 @@ END:VCALENDAR`
 	if !found {
 		t.Errorf("expected to find active recurring instance of 'Multi-day Workshop' for %v", now)
 	}
-	}
+}
 
 func TestParseICalendar_MultiDaySingleEvent(t *testing.T) {
 	// Single event spanning multiple days.
@@ -349,5 +355,26 @@ END:VCALENDAR`
 
 	if ev.StartTime.After(now) || ev.EndTime.Before(now) {
 		t.Errorf("Event should be active at %v, but got StartTime=%v, EndTime=%v", now, ev.StartTime, ev.EndTime)
+	}
+}
+
+func TestExtractICalendarTimezone(t *testing.T) {
+	icalData := `BEGIN:VCALENDAR
+VERSION:2.0
+X-WR-TIMEZONE:Europe/London
+BEGIN:VEVENT
+UID:event1
+DTSTART:20260406T100000Z
+DTEND:20260406T110000Z
+SUMMARY:Test Event
+END:VEVENT
+END:VCALENDAR`
+
+	tz, err := ExtractICalendarTimezone([]byte(icalData))
+	if err != nil {
+		t.Fatalf("ExtractICalendarTimezone: %v", err)
+	}
+	if tz != "Europe/London" {
+		t.Fatalf("timezone: got %q, want %q", tz, "Europe/London")
 	}
 }

@@ -1,6 +1,6 @@
 # status
 
-Personal app to sync my calendar status with GitHub. Just because.
+Personal app to sync my calendar status with GitHub and expose availability from a separate calendar.
 
 ## Quickstart
 
@@ -10,3 +10,4 @@ export GITHUB_TOKEN="ghp_..."
 
 podman compose up
 ```
+

@@ -10,3 +10,28 @@ targets:
     # Scopes required: user scope for status updates
     # token: ghp_xyz
     token: ""
+
+availability:
+  # Disabled by default. Set to true to enable the availability API.
+  is_enabled: false
+  # Separate iCal URL for availability data.
+  calendar_url: https://example.com/availability.ics
+  # Exact Authorization header value required by /api/availability.
+  api_key: ""
+  # Ordered availability windows, checked from top to bottom.
+  blocks:
+    - name: First half
+      start: "09:00"
+      end: "15:00"
+    - name: Second half
+      start: "14:00"
+      end: "20:00"
+    - name: Morning
+      start: "09:00"
+      end: "12:00"
+    - name: Afternoon
+      start: "12:00"
+      end: "16:30"
+    - name: Evening
+      start: "17:30"
+      end: "22:00"

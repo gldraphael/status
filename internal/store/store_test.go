@@ -67,6 +67,51 @@ func TestStatus_SetGetDelete(t *testing.T) {
 	}
 }
 
+func TestAvailabilitySnapshot_SetGet(t *testing.T) {
+	st := newTestStore(t)
+
+	_, ok, err := st.GetAvailabilitySnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected not found before set")
+	}
+
+	want := &store.AvailabilitySnapshot{
+		Body:      "BEGIN:VCALENDAR\nEND:VCALENDAR",
+		Timezone:  "Europe/London",
+		FetchedAt: time.Now().Truncate(time.Millisecond),
+	}
+	if err := st.SetAvailabilitySnapshot(want); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := st.GetAvailabilitySnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected found after set")
+	}
+	if got.Body != want.Body || got.Timezone != want.Timezone {
+		t.Errorf("availability snapshot mismatch: got %+v, want %+v", got, want)
+	}
+
+	want.Body = "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR"
+	want.Timezone = "UTC"
+	if err := st.SetAvailabilitySnapshot(want); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err = st.GetAvailabilitySnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Timezone != "UTC" {
+		t.Errorf("expected overwrite to update timezone, got %+v", got)
+	}
+}
+
 func TestEvent_SetGet(t *testing.T) {
 	st := newTestStore(t)
 

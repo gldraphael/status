@@ -23,6 +23,13 @@ fullnameOverride: ""
 env: []
   # - name: EXAMPLE_ENV_VAR
   #   value: "example-value"
+  # Availability env vars supported by the app:
+  # - name: AVAILABILITY_IS_ENABLED
+  #   value: "true"
+  # - name: AVAILABILITY_CALENDAR_URL
+  #   value: "https://example.com/availability.ics"
+  # - name: AVAILABILITY_API_KEY
+  #   value: "secret-key"
 
 # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
 serviceAccount:
