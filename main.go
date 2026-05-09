@@ -11,6 +11,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/gldraphael/status/internal/availability"
 	"github.com/gldraphael/status/internal/calendar"
 	"github.com/gldraphael/status/internal/config"
 	githubTarget "github.com/gldraphael/status/internal/github"
@@ -30,6 +31,9 @@ func run(logger zerolog.Logger) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	if err := cfg.Availability.Validate(); err != nil {
+		return fmt.Errorf("validate availability config: %w", err)
 	}
 
 	// Clear any persisted data on startup to ensure a fresh sync from the calendar.
@@ -52,19 +56,54 @@ func run(logger zerolog.Logger) error {
 
 	targets := buildTargets(cfg)
 	syncer := calendar.NewSyncer(st, calClient, targets, logger)
-
-	// Start the sync loop in a goroutine. Use 5-minute sync interval.
-	go func() {
-		if err := syncer.Run(ctx, 5*time.Minute); err != nil {
-			logger.Error().Err(err).Msg("sync loop exited")
-		}
-	}()
+	var (
+		availabilitySyncer *availability.Syncer
+	)
 
 	// Health-check endpoint.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+
+	if cfg.Availability.IsEnabled {
+		workingHours, err := availability.ParseWorkingHours(cfg.Availability.WorkingHours.Start, cfg.Availability.WorkingHours.End)
+		if err != nil {
+			return fmt.Errorf("parse availability working hours: %w", err)
+		}
+
+		availabilityClient, err := availability.NewClient(cfg.Availability.CalendarURL)
+		if err != nil {
+			return fmt.Errorf("create availability client: %w", err)
+		}
+		availabilityBlocks, err := availability.ParseBlocks(cfg.Availability.Blocks)
+		if err != nil {
+			return fmt.Errorf("parse availability blocks: %w", err)
+		}
+
+		if cfg.Availability.ExcludeEnglandBankHolidays {
+			if err := availability.SyncHolidaySnapshot(ctx, st, availability.NewHolidayClient(), logger); err != nil {
+				return fmt.Errorf("seed bank holidays: %w", err)
+			}
+		}
+
+		availabilitySyncer = availability.NewSyncer(st, availabilityClient, logger)
+		mux.Handle("GET /api/availability", availability.NewHandler(st, cfg.Availability.APIKey, availabilityBlocks, workingHours, cfg.Availability.ExcludeEnglandBankHolidays, logger))
+	}
+
+	// Start the sync loops only after all startup validation succeeds.
+	go func() {
+		if err := syncer.Run(ctx, 5*time.Minute); err != nil {
+			logger.Error().Err(err).Msg("sync loop exited")
+		}
+	}()
+	if availabilitySyncer != nil {
+		go func() {
+			if err := availabilitySyncer.Run(ctx, 5*time.Minute); err != nil {
+				logger.Error().Err(err).Msg("availability sync loop exited")
+			}
+		}()
+	}
 
 	srv := server.New(cfg.Port, mux, logger)
 	return srv.Start(ctx)

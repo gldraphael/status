@@ -25,6 +25,20 @@ type Event struct {
 	Cancelled bool      `json:"cancelled"`
 }
 
+// AvailabilitySnapshot stores the latest fetched availability calendar data.
+type AvailabilitySnapshot struct {
+	Body      string    `json:"body"`
+	Timezone  string    `json:"timezone"`
+	FetchedAt time.Time `json:"fetched_at"`
+}
+
+// HolidaySnapshot stores the latest fetched England bank holiday data.
+type HolidaySnapshot struct {
+	Body      string    `json:"body"`
+	Dates     []string  `json:"dates"`
+	FetchedAt time.Time `json:"fetched_at"`
+}
+
 // Channel represents a registered Google Calendar push notification channel.
 type Channel struct {
 	ID         string    `json:"id"`
@@ -88,6 +102,66 @@ func (s *Store) DeleteStatus() error {
 	err := s.db.Delete(statusKey(), pebble.Sync)
 	if err != nil && !errors.Is(err, pebble.ErrNotFound) {
 		return fmt.Errorf("delete status: %w", err)
+	}
+	return nil
+}
+
+// GetAvailabilitySnapshot returns the stored availability calendar snapshot.
+func (s *Store) GetAvailabilitySnapshot() (*AvailabilitySnapshot, bool, error) {
+	data, closer, err := s.db.Get(availabilityKey())
+	if errors.Is(err, pebble.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("get availability snapshot: %w", err)
+	}
+	defer closer.Close()
+
+	var snap AvailabilitySnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return nil, false, fmt.Errorf("unmarshal availability snapshot: %w", err)
+	}
+	return &snap, true, nil
+}
+
+// SetAvailabilitySnapshot persists the latest availability calendar snapshot.
+func (s *Store) SetAvailabilitySnapshot(snap *AvailabilitySnapshot) error {
+	data, err := json.Marshal(snap)
+	if err != nil {
+		return fmt.Errorf("marshal availability snapshot: %w", err)
+	}
+	if err := s.db.Set(availabilityKey(), data, pebble.Sync); err != nil {
+		return fmt.Errorf("set availability snapshot: %w", err)
+	}
+	return nil
+}
+
+// GetHolidaySnapshot returns the stored bank holiday snapshot.
+func (s *Store) GetHolidaySnapshot() (*HolidaySnapshot, bool, error) {
+	data, closer, err := s.db.Get(availabilityHolidaysKey())
+	if errors.Is(err, pebble.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("get holiday snapshot: %w", err)
+	}
+	defer closer.Close()
+
+	var snap HolidaySnapshot
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return nil, false, fmt.Errorf("unmarshal holiday snapshot: %w", err)
+	}
+	return &snap, true, nil
+}
+
+// SetHolidaySnapshot persists the latest bank holiday snapshot.
+func (s *Store) SetHolidaySnapshot(snap *HolidaySnapshot) error {
+	data, err := json.Marshal(snap)
+	if err != nil {
+		return fmt.Errorf("marshal holiday snapshot: %w", err)
+	}
+	if err := s.db.Set(availabilityHolidaysKey(), data, pebble.Sync); err != nil {
+		return fmt.Errorf("set holiday snapshot: %w", err)
 	}
 	return nil
 }

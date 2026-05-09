@@ -67,6 +67,96 @@ func TestStatus_SetGetDelete(t *testing.T) {
 	}
 }
 
+func TestAvailabilitySnapshot_SetGet(t *testing.T) {
+	st := newTestStore(t)
+
+	_, ok, err := st.GetAvailabilitySnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected not found before set")
+	}
+
+	want := &store.AvailabilitySnapshot{
+		Body:      "BEGIN:VCALENDAR\nEND:VCALENDAR",
+		Timezone:  "Europe/London",
+		FetchedAt: time.Now().Truncate(time.Millisecond),
+	}
+	if err := st.SetAvailabilitySnapshot(want); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := st.GetAvailabilitySnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected found after set")
+	}
+	if got.Body != want.Body || got.Timezone != want.Timezone {
+		t.Errorf("availability snapshot mismatch: got %+v, want %+v", got, want)
+	}
+
+	want.Body = "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR"
+	want.Timezone = "UTC"
+	if err := st.SetAvailabilitySnapshot(want); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err = st.GetAvailabilitySnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Timezone != "UTC" {
+		t.Errorf("expected overwrite to update timezone, got %+v", got)
+	}
+}
+
+func TestHolidaySnapshot_SetGet(t *testing.T) {
+	st := newTestStore(t)
+
+	_, ok, err := st.GetHolidaySnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected not found before set")
+	}
+
+	want := &store.HolidaySnapshot{
+		Body:      `{"england-and-wales":{"division":"england-and-wales","events":[]}}`,
+		Dates:     []string{"2026-04-06", "2026-12-25"},
+		FetchedAt: time.Now().Truncate(time.Millisecond),
+	}
+	if err := st.SetHolidaySnapshot(want); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := st.GetHolidaySnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected found after set")
+	}
+	if got.Body != want.Body || len(got.Dates) != len(want.Dates) {
+		t.Fatalf("holiday snapshot mismatch: got %+v, want %+v", got, want)
+	}
+
+	want.Body = `{"england-and-wales":{"division":"england-and-wales","events":[{"date":"2026-04-07"}]}}`
+	want.Dates = []string{"2026-04-07"}
+	if err := st.SetHolidaySnapshot(want); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err = st.GetHolidaySnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Dates) != 1 || got.Dates[0] != "2026-04-07" {
+		t.Errorf("expected overwrite to update dates, got %+v", got)
+	}
+}
+
 func TestEvent_SetGet(t *testing.T) {
 	st := newTestStore(t)
 

@@ -21,8 +21,14 @@ type ParsedEvent struct {
 	Cancelled bool
 }
 
-// FetchAndParseICalendar fetches and parses an iCal file from the given URL.
-func FetchAndParseICalendar(ctx context.Context, calendarURL string) ([]ParsedEvent, error) {
+// ParsedCalendar is the parsed representation of an iCal feed.
+type ParsedCalendar struct {
+	Timezone string
+	Events   []ParsedEvent
+}
+
+// FetchICalendarBody fetches the raw iCal body from the given URL.
+func FetchICalendarBody(ctx context.Context, calendarURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, calendarURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -39,44 +45,73 @@ func FetchAndParseICalendar(ctx context.Context, calendarURL string) ([]ParsedEv
 		return nil, fmt.Errorf("fetch calendar: unexpected status %s", resp.Status)
 	}
 
-	// Read the response body into a byte slice.
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
-	return parseICalendar(body, time.Now())
+	return body, nil
 }
 
-// parseICalendar parses an iCal stream and extracts VEVENT components.
-// now is used as the center of the recurrence expansion window.
-func parseICalendar(data interface{}, now time.Time) ([]ParsedEvent, error) {
-	var body string
-	switch v := data.(type) {
-	case []byte:
-		body = string(v)
-	case string:
-		body = v
-	default:
-		return nil, fmt.Errorf("unsupported data type")
+// FetchAndParseICalendar fetches and parses an iCal file from the given URL.
+func FetchAndParseICalendar(ctx context.Context, calendarURL string) ([]ParsedEvent, error) {
+	body, err := FetchICalendarBody(ctx, calendarURL)
+	if err != nil {
+		return nil, err
 	}
 
-	if now.IsZero() {
-		now = time.Now()
+	now := time.Now()
+	parsed, err := ParseICalendar(body, now.Add(-24*time.Hour), now.Add(24*time.Hour))
+	if err != nil {
+		return nil, err
+	}
+	return parsed.Events, nil
+}
+
+// ParseICalendar parses an iCal stream and expands recurring events within the
+// requested time window.
+func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalendar, error) {
+	if windowStart.IsZero() {
+		windowStart = time.Now()
+	}
+	if windowEnd.IsZero() {
+		windowEnd = windowStart.Add(24 * time.Hour)
+	}
+	if windowEnd.Before(windowStart) {
+		return nil, fmt.Errorf("window end must not be before window start")
 	}
 
-	cal, err := ics.ParseCalendar(strings.NewReader(body))
+	cal, err := ics.ParseCalendar(strings.NewReader(string(data)))
 	if err != nil {
 		return nil, fmt.Errorf("parse calendar: %w", err)
 	}
 
-	var events []ParsedEvent
-	// Expand recurrences for a window around now.
-	windowEnd := now.Add(24 * time.Hour)
+	parsed := &ParsedCalendar{
+		Timezone: calendarTimezone(cal),
+		Events:   make([]ParsedEvent, 0, len(cal.Events())),
+	}
+
+	type baseEvent struct {
+		id        string
+		summary   string
+		startTime time.Time
+		endTime   time.Time
+		cancelled bool
+		rrule     string
+	}
+
+	baseEvents := make([]baseEvent, 0, len(cal.Events()))
+	maxDuration := time.Duration(0)
 
 	for _, event := range cal.Events() {
-		summary := event.GetProperty(ics.ComponentPropertySummary).Value
-		uid := event.GetProperty(ics.ComponentPropertyUniqueId).Value
+		summary := ""
+		if prop := event.GetProperty(ics.ComponentPropertySummary); prop != nil {
+			summary = prop.Value
+		}
+		uid := ""
+		if prop := event.GetProperty(ics.ComponentPropertyUniqueId); prop != nil {
+			uid = prop.Value
+		}
 		status := event.GetProperty(ics.ComponentPropertyStatus)
 		cancelled := status != nil && status.Value == "CANCELLED"
 
@@ -88,52 +123,117 @@ func parseICalendar(data interface{}, now time.Time) ([]ParsedEvent, error) {
 		if err != nil {
 			continue
 		}
-		duration := endAt.Sub(startAt)
+		if duration := endAt.Sub(startAt); duration > maxDuration {
+			maxDuration = duration
+		}
 
-		rruleProp := event.GetProperty(ics.ComponentPropertyRrule)
-		if rruleProp == nil {
-			// Single event.
-			events = append(events, ParsedEvent{
-				ID:        uid,
-				Summary:   summary,
-				StartTime: startAt,
-				EndTime:   endAt,
-				Cancelled: cancelled,
-			})
+		base := baseEvent{
+			id:        uid,
+			summary:   summary,
+			startTime: startAt,
+			endTime:   endAt,
+			cancelled: cancelled,
+		}
+		if rruleProp := event.GetProperty(ics.ComponentPropertyRrule); rruleProp != nil {
+			base.rrule = rruleProp.Value
+		}
+		baseEvents = append(baseEvents, base)
+	}
+
+	lookback := windowStart.Add(-maxDuration)
+
+	for _, base := range baseEvents {
+		if base.rrule == "" {
+			if overlaps(base.startTime, base.endTime, windowStart, windowEnd) {
+				parsed.Events = append(parsed.Events, ParsedEvent{
+					ID:        base.id,
+					Summary:   base.summary,
+					StartTime: base.startTime,
+					EndTime:   base.endTime,
+					Cancelled: base.cancelled,
+				})
+			}
 			continue
 		}
 
-		// Recurring event.
-		option, err := rrule.StrToROption(rruleProp.Value)
+		option, err := rrule.StrToROption(base.rrule)
 		if err == nil {
-			option.Dtstart = startAt
+			option.Dtstart = base.startTime
 			rule, err := rrule.NewRRule(*option)
 			if err == nil {
-				// Use a window that looks back far enough to catch events that are still active.
-				windowStart := now.Add(-duration)
-				instances := rule.Between(windowStart, windowEnd, true)
+				instances := rule.Between(lookback, windowEnd, true)
+				duration := base.endTime.Sub(base.startTime)
 				for _, inst := range instances {
-					events = append(events, ParsedEvent{
-						ID:        fmt.Sprintf("%s-%s", uid, inst.Format(time.RFC3339)),
-						Summary:   summary,
+					endAt := inst.Add(duration)
+					if !overlaps(inst, endAt, windowStart, windowEnd) {
+						continue
+					}
+					parsed.Events = append(parsed.Events, ParsedEvent{
+						ID:        fmt.Sprintf("%s-%s", base.id, inst.Format(time.RFC3339)),
+						Summary:   base.summary,
 						StartTime: inst,
-						EndTime:   inst.Add(duration),
-						Cancelled: cancelled,
+						EndTime:   endAt,
+						Cancelled: base.cancelled,
 					})
 				}
 				continue
 			}
 		}
 
-		// Fallback to base instance.
-		events = append(events, ParsedEvent{
-			ID:        uid,
-			Summary:   summary,
-			StartTime: startAt,
-			EndTime:   endAt,
-			Cancelled: cancelled,
-		})
+		if overlaps(base.startTime, base.endTime, windowStart, windowEnd) {
+			parsed.Events = append(parsed.Events, ParsedEvent{
+				ID:        base.id,
+				Summary:   base.summary,
+				StartTime: base.startTime,
+				EndTime:   base.endTime,
+				Cancelled: base.cancelled,
+			})
+		}
 	}
 
-	return events, nil
+	return parsed, nil
+}
+
+// ExtractICalendarTimezone returns the calendar's timezone, falling back to UTC.
+func ExtractICalendarTimezone(data []byte) (string, error) {
+	cal, err := ics.ParseCalendar(strings.NewReader(string(data)))
+	if err != nil {
+		return "", fmt.Errorf("parse calendar: %w", err)
+	}
+	return calendarTimezone(cal), nil
+}
+
+// parseICalendar is a compatibility wrapper used by the existing tests.
+func parseICalendar(data interface{}, now time.Time) ([]ParsedEvent, error) {
+	var body []byte
+	switch v := data.(type) {
+	case []byte:
+		body = v
+	case string:
+		body = []byte(v)
+	default:
+		return nil, fmt.Errorf("unsupported data type")
+	}
+
+	parsed, err := ParseICalendar(body, now.Add(-24*time.Hour), now.Add(24*time.Hour))
+	if err != nil {
+		return nil, err
+	}
+	return parsed.Events, nil
+}
+
+func calendarTimezone(cal *ics.Calendar) string {
+	for _, prop := range cal.CalendarProperties {
+		switch prop.IANAToken {
+		case string(ics.PropertyXWRTimezone), string(ics.PropertyTimezoneId), string(ics.PropertyTzid):
+			if prop.Value != "" {
+				return prop.Value
+			}
+		}
+	}
+	return "UTC"
+}
+
+func overlaps(start, end, windowStart, windowEnd time.Time) bool {
+	return start.Before(windowEnd) && end.After(windowStart)
 }
