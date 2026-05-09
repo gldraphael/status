@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/knadh/koanf/parsers/yaml"
@@ -35,10 +36,18 @@ type GitHubTargetConfig struct {
 
 // AvailabilityConfig configures the optional availability feature.
 type AvailabilityConfig struct {
-	IsEnabled   bool                      `koanf:"is_enabled"`
-	CalendarURL string                    `koanf:"calendar_url"`
-	APIKey      string                    `koanf:"api_key"`
-	Blocks      []AvailabilityBlockConfig `koanf:"blocks"`
+	IsEnabled                  bool                           `koanf:"is_enabled"`
+	CalendarURL                string                         `koanf:"calendar_url"`
+	APIKey                     string                         `koanf:"api_key"`
+	WorkingHours               AvailabilityWorkingHoursConfig `koanf:"working_hours"`
+	ExcludeEnglandBankHolidays bool                           `koanf:"exclude_england_bank_holidays"`
+	Blocks                     []AvailabilityBlockConfig      `koanf:"blocks"`
+}
+
+// AvailabilityWorkingHoursConfig defines the weekday working-hours window.
+type AvailabilityWorkingHoursConfig struct {
+	Start string `koanf:"start"` // HH:MM, 24-hour clock
+	End   string `koanf:"end"`   // HH:MM, 24-hour clock
 }
 
 // AvailabilityBlockConfig defines one ordered availability window.
@@ -51,14 +60,17 @@ type AvailabilityBlockConfig struct {
 // envMapping maps environment variable names to koanf config keys.
 // Only variables listed here are loaded; all others are ignored.
 var envMapping = map[string]string{
-	"PORT":                      "port",
-	"PEBBLE_PATH":               "pebble_path",
-	"CALENDAR_URL":              "calendar_url",
-	"GITHUB_TOKEN":              "targets.github.token",
-	"GITHUB_USERNAME":           "targets.github.username",
-	"AVAILABILITY_IS_ENABLED":   "availability.is_enabled",
-	"AVAILABILITY_CALENDAR_URL": "availability.calendar_url",
-	"AVAILABILITY_API_KEY":      "availability.api_key",
+	"PORT":                                       "port",
+	"PEBBLE_PATH":                                "pebble_path",
+	"CALENDAR_URL":                               "calendar_url",
+	"GITHUB_TOKEN":                               "targets.github.token",
+	"GITHUB_USERNAME":                            "targets.github.username",
+	"AVAILABILITY_IS_ENABLED":                    "availability.is_enabled",
+	"AVAILABILITY_CALENDAR_URL":                  "availability.calendar_url",
+	"AVAILABILITY_API_KEY":                       "availability.api_key",
+	"AVAILABILITY_WORKING_HOURS_START":           "availability.working_hours.start",
+	"AVAILABILITY_WORKING_HOURS_END":             "availability.working_hours.end",
+	"AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS": "availability.exclude_england_bank_holidays",
 }
 
 // configFile is the optional YAML config file loaded between defaults and env vars.
@@ -74,8 +86,11 @@ func Load() (*Config, error) {
 
 	// 1. Defaults.
 	if err := k.Load(confmap.Provider(map[string]interface{}{
-		"port":        8080,
-		"pebble_path": "./data",
+		"port":                             8080,
+		"pebble_path":                      "./data",
+		"availability.working_hours.start": "09:00",
+		"availability.working_hours.end":   "17:50",
+		"availability.exclude_england_bank_holidays": false,
 	}, "."), nil); err != nil {
 		return nil, fmt.Errorf("load defaults: %w", err)
 	}
@@ -111,11 +126,20 @@ func (a AvailabilityConfig) Validate() error {
 	if !a.IsEnabled {
 		return nil
 	}
+	if a.WorkingHours.Start == "" {
+		return fmt.Errorf("availability.working_hours.start is required when availability is enabled")
+	}
+	if a.WorkingHours.End == "" {
+		return fmt.Errorf("availability.working_hours.end is required when availability is enabled")
+	}
 	if a.CalendarURL == "" {
 		return fmt.Errorf("availability.calendar_url is required when availability is enabled")
 	}
 	if a.APIKey == "" {
 		return fmt.Errorf("availability.api_key is required when availability is enabled")
+	}
+	if _, _, err := parseClockRange(a.WorkingHours.Start, a.WorkingHours.End); err != nil {
+		return fmt.Errorf("availability.working_hours: %w", err)
 	}
 	if len(a.Blocks) == 0 {
 		return fmt.Errorf("availability.blocks is required when availability is enabled")
@@ -130,17 +154,24 @@ func (a AvailabilityConfig) Validate() error {
 		if block.End == "" {
 			return fmt.Errorf("availability.blocks[%d].end is required", i)
 		}
-		start, err := time.Parse("15:04", block.Start)
-		if err != nil {
-			return fmt.Errorf("availability.blocks[%d].start: %w", i, err)
-		}
-		end, err := time.Parse("15:04", block.End)
-		if err != nil {
-			return fmt.Errorf("availability.blocks[%d].end: %w", i, err)
-		}
-		if !end.After(start) {
-			return fmt.Errorf("availability.blocks[%d] end must be after start", i)
+		if _, _, err := parseClockRange(block.Start, block.End); err != nil {
+			return fmt.Errorf("availability.blocks[%d]: %w", i, err)
 		}
 	}
 	return nil
+}
+
+func parseClockRange(startValue, endValue string) (time.Time, time.Time, error) {
+	start, err := time.Parse("15:04", strings.TrimSpace(startValue))
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	end, err := time.Parse("15:04", strings.TrimSpace(endValue))
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if !end.After(start) {
+		return time.Time{}, time.Time{}, fmt.Errorf("end must be after start")
+	}
+	return start, end, nil
 }

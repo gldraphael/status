@@ -2,6 +2,7 @@ package availability
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gldraphael/status/internal/calendar"
@@ -15,11 +16,25 @@ type Block struct {
 	End   time.Duration
 }
 
+// WorkingHours describes the weekday time window used to suppress availability.
+type WorkingHours struct {
+	Start time.Duration
+	End   time.Duration
+}
+
 // Entry is one availability result returned by the API.
 type Entry struct {
 	DayOfWeek string `json:"day_of_week"`
 	Block     string `json:"block"`
 	Date      string `json:"date"`
+}
+
+// ComputeOptions configures availability computation.
+type ComputeOptions struct {
+	WorkingHours               WorkingHours
+	HolidayDates               []string
+	ExcludeEnglandBankHolidays bool
+	Now                        time.Time
 }
 
 // ParseBlocks converts configured blocks into runtime blocks.
@@ -43,14 +58,29 @@ func ParseBlocks(blocks []config.AvailabilityBlockConfig) ([]Block, error) {
 	return parsed, nil
 }
 
+// ParseWorkingHours converts the configured weekday working-hours window.
+func ParseWorkingHours(startValue, endValue string) (WorkingHours, error) {
+	start, end, err := parseClockRange(startValue, endValue)
+	if err != nil {
+		return WorkingHours{}, err
+	}
+	return WorkingHours{Start: start, End: end}, nil
+}
+
 // Compute derives availability entries from a stored raw iCal body.
-func Compute(body string, timezone string, blocks []Block, now time.Time) ([]Entry, error) {
+func Compute(body string, timezone string, blocks []Block, opts ComputeOptions) ([]Entry, error) {
 	if len(blocks) == 0 {
 		return nil, fmt.Errorf("no availability blocks configured")
 	}
+	if opts.WorkingHours.End <= opts.WorkingHours.Start {
+		return nil, fmt.Errorf("invalid working hours")
+	}
+	if opts.Now.IsZero() {
+		opts.Now = time.Now()
+	}
 
 	loc := loadLocation(timezone)
-	nowLocal := now.In(loc)
+	nowLocal := opts.Now.In(loc)
 	dayStart := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
 	windowStart := dayStart
 	windowEnd := dayStart.AddDate(0, 0, 10)
@@ -60,15 +90,36 @@ func Compute(body string, timezone string, blocks []Block, now time.Time) ([]Ent
 		return nil, err
 	}
 
+	holidaySet := make(map[string]struct{}, len(opts.HolidayDates))
+	if opts.ExcludeEnglandBankHolidays {
+		for _, date := range opts.HolidayDates {
+			if date == "" {
+				continue
+			}
+			holidaySet[date] = struct{}{}
+		}
+	}
+
 	entries := make([]Entry, 0, 10)
 	for dayOffset := 0; dayOffset < 10; dayOffset++ {
 		day := dayStart.AddDate(0, 0, dayOffset)
+		dayKey := day.Format("2006-01-02")
+		_, isHoliday := holidaySet[dayKey]
+		applyWorkingHours := day.Weekday() != time.Saturday && day.Weekday() != time.Sunday
+		if opts.ExcludeEnglandBankHolidays && isHoliday {
+			applyWorkingHours = false
+		}
+		workingStart := day.Add(opts.WorkingHours.Start)
+		workingEnd := day.Add(opts.WorkingHours.End)
 
 		for _, block := range blocks {
 			blockStart := day.Add(block.Start)
 			blockEnd := day.Add(block.End)
 
 			if dayOffset == 0 && blockStart.Before(nowLocal) {
+				continue
+			}
+			if applyWorkingHours && overlaps(blockStart, blockEnd, workingStart, workingEnd) {
 				continue
 			}
 			if !blockIsFree(parsed.Events, blockStart, blockEnd, loc) {
@@ -85,6 +136,21 @@ func Compute(body string, timezone string, blocks []Block, now time.Time) ([]Ent
 	}
 
 	return entries, nil
+}
+
+func parseClockRange(startValue, endValue string) (time.Duration, time.Duration, error) {
+	start, err := parseClock(strings.TrimSpace(startValue))
+	if err != nil {
+		return 0, 0, err
+	}
+	end, err := parseClock(strings.TrimSpace(endValue))
+	if err != nil {
+		return 0, 0, err
+	}
+	if end <= start {
+		return 0, 0, fmt.Errorf("end must be after start")
+	}
+	return start, end, nil
 }
 
 func parseClock(value string) (time.Duration, error) {
@@ -119,4 +185,8 @@ func blockIsFree(events []calendar.ParsedEvent, start, end time.Time, loc *time.
 		}
 	}
 	return true
+}
+
+func overlaps(start, end, windowStart, windowEnd time.Time) bool {
+	return start.Before(windowEnd) && end.After(windowStart)
 }

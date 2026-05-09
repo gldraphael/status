@@ -25,7 +25,7 @@ func TestLoad_Defaults(t *testing.T) {
 	// Work in a temp dir with no config.yaml.
 	chdir(t, t.TempDir())
 
-	for _, key := range []string{"PORT", "PEBBLE_PATH", "CALENDAR_URL", "GITHUB_TOKEN", "GITHUB_USERNAME", "AVAILABILITY_IS_ENABLED", "AVAILABILITY_CALENDAR_URL", "AVAILABILITY_API_KEY"} {
+	for _, key := range []string{"PORT", "PEBBLE_PATH", "CALENDAR_URL", "GITHUB_TOKEN", "GITHUB_USERNAME", "AVAILABILITY_IS_ENABLED", "AVAILABILITY_CALENDAR_URL", "AVAILABILITY_API_KEY", "AVAILABILITY_WORKING_HOURS_START", "AVAILABILITY_WORKING_HOURS_END", "AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS"} {
 		t.Setenv(key, "")
 	}
 
@@ -41,6 +41,12 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.CalendarURL != "" {
 		t.Errorf("CalendarURL: got %q, want empty (no default)", cfg.CalendarURL)
+	}
+	if cfg.Availability.WorkingHours.Start != "09:00" || cfg.Availability.WorkingHours.End != "17:50" {
+		t.Errorf("Availability.WorkingHours: got %+v, want start 09:00 end 17:50", cfg.Availability.WorkingHours)
+	}
+	if cfg.Availability.ExcludeEnglandBankHolidays {
+		t.Error("expected bank holiday exclusion to be disabled by default")
 	}
 	if cfg.Availability.IsEnabled {
 		t.Error("expected availability to be disabled by default")
@@ -58,6 +64,9 @@ func TestLoad_FromEnv(t *testing.T) {
 	t.Setenv("AVAILABILITY_IS_ENABLED", "")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
 	t.Setenv("AVAILABILITY_API_KEY", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
+	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -88,6 +97,9 @@ func TestLoad_AvailabilityFromEnv(t *testing.T) {
 	t.Setenv("AVAILABILITY_IS_ENABLED", "true")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "https://availability.example.com/ical.ics")
 	t.Setenv("AVAILABILITY_API_KEY", "secret-key")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "08:30")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "17:15")
+	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "true")
 
 	cfg, err := Load()
 	if err != nil {
@@ -102,6 +114,12 @@ func TestLoad_AvailabilityFromEnv(t *testing.T) {
 	if cfg.Availability.APIKey != "secret-key" {
 		t.Errorf("Availability.APIKey: got %q", cfg.Availability.APIKey)
 	}
+	if cfg.Availability.WorkingHours.Start != "08:30" || cfg.Availability.WorkingHours.End != "17:15" {
+		t.Errorf("Availability.WorkingHours: got %+v", cfg.Availability.WorkingHours)
+	}
+	if !cfg.Availability.ExcludeEnglandBankHolidays {
+		t.Error("expected holiday exclusion to be enabled from env")
+	}
 }
 
 func TestLoad_InvalidPort(t *testing.T) {
@@ -114,6 +132,9 @@ func TestLoad_InvalidPort(t *testing.T) {
 	t.Setenv("AVAILABILITY_IS_ENABLED", "")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
 	t.Setenv("AVAILABILITY_API_KEY", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
+	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for invalid PORT, got nil")
@@ -133,6 +154,9 @@ func TestLoad_FromYAML(t *testing.T) {
 	t.Setenv("AVAILABILITY_IS_ENABLED", "")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
 	t.Setenv("AVAILABILITY_API_KEY", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
+	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 
 	yaml := `
 port: 7777
@@ -176,12 +200,19 @@ func TestLoad_AvailabilityFromYAML(t *testing.T) {
 	t.Setenv("AVAILABILITY_IS_ENABLED", "")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
 	t.Setenv("AVAILABILITY_API_KEY", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
+	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 
 	yaml := `
 availability:
   is_enabled: true
   calendar_url: https://availability.example.com/ical.ics
   api_key: secret-yaml-key
+  working_hours:
+    start: "09:00"
+    end: "17:50"
+  exclude_england_bank_holidays: true
   blocks:
     - name: First half
       start: "09:00"
@@ -207,6 +238,12 @@ availability:
 	if cfg.Availability.APIKey != "secret-yaml-key" {
 		t.Errorf("Availability.APIKey: got %q", cfg.Availability.APIKey)
 	}
+	if cfg.Availability.WorkingHours.Start != "09:00" || cfg.Availability.WorkingHours.End != "17:50" {
+		t.Errorf("Availability.WorkingHours: got %+v", cfg.Availability.WorkingHours)
+	}
+	if !cfg.Availability.ExcludeEnglandBankHolidays {
+		t.Error("expected holiday exclusion to be enabled from YAML")
+	}
 	if len(cfg.Availability.Blocks) != 2 {
 		t.Fatalf("expected 2 blocks, got %d", len(cfg.Availability.Blocks))
 	}
@@ -226,6 +263,11 @@ func TestLoad_EnvOverridesYAML(t *testing.T) {
 	yaml := `
 port: 7777
 calendar_url: https://yaml-cal.example.com/ical.ics
+availability:
+  working_hours:
+    start: "10:00"
+    end: "16:00"
+  exclude_england_bank_holidays: false
 targets:
   github:
     token: gh-yaml
@@ -241,6 +283,9 @@ targets:
 	t.Setenv("AVAILABILITY_IS_ENABLED", "")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
 	t.Setenv("AVAILABILITY_API_KEY", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
+	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -266,12 +311,22 @@ func TestLoad_AvailabilityEnvOverridesYAML(t *testing.T) {
 	t.Setenv("CALENDAR_URL", "")
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GITHUB_USERNAME", "")
+	t.Setenv("AVAILABILITY_IS_ENABLED", "")
+	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
+	t.Setenv("AVAILABILITY_API_KEY", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
+	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 
 	yaml := `
 availability:
   is_enabled: false
   calendar_url: https://yaml-availability.example.com/ical.ics
   api_key: yaml-key
+  working_hours:
+    start: "10:00"
+    end: "16:00"
+  exclude_england_bank_holidays: false
   blocks:
     - name: Morning
       start: "09:00"
@@ -284,6 +339,9 @@ availability:
 	t.Setenv("AVAILABILITY_IS_ENABLED", "true")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "https://env-availability.example.com/ical.ics")
 	t.Setenv("AVAILABILITY_API_KEY", "env-key")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "08:45")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "17:15")
+	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "true")
 
 	cfg, err := Load()
 	if err != nil {
@@ -297,6 +355,12 @@ availability:
 	}
 	if cfg.Availability.APIKey != "env-key" {
 		t.Errorf("Availability.APIKey: got %q", cfg.Availability.APIKey)
+	}
+	if cfg.Availability.WorkingHours.Start != "08:45" || cfg.Availability.WorkingHours.End != "17:15" {
+		t.Errorf("Availability.WorkingHours: got %+v", cfg.Availability.WorkingHours)
+	}
+	if !cfg.Availability.ExcludeEnglandBankHolidays {
+		t.Error("expected env to enable bank holiday exclusion")
 	}
 }
 
@@ -313,6 +377,9 @@ func TestLoad_YAMLOverridesDefaults(t *testing.T) {
 	t.Setenv("AVAILABILITY_IS_ENABLED", "")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
 	t.Setenv("AVAILABILITY_API_KEY", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
+	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 
 	yaml := `
 port: 3000
@@ -349,6 +416,9 @@ func TestLoad_MissingYAML(t *testing.T) {
 	t.Setenv("AVAILABILITY_IS_ENABLED", "")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
 	t.Setenv("AVAILABILITY_API_KEY", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
+	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
+	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load without config.yaml: %v", err)
@@ -370,12 +440,51 @@ func TestAvailabilityValidate(t *testing.T) {
 			IsEnabled:   true,
 			CalendarURL: "https://example.com/ical.ics",
 			APIKey:      "secret",
+			WorkingHours: AvailabilityWorkingHoursConfig{
+				Start: "09:00",
+				End:   "17:50",
+			},
 			Blocks: []AvailabilityBlockConfig{
 				{Name: "Morning", Start: "09:00", End: "12:00"},
 			},
 		}
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("enabled invalid working hours", func(t *testing.T) {
+		cfg := AvailabilityConfig{
+			IsEnabled:   true,
+			CalendarURL: "https://example.com/ical.ics",
+			APIKey:      "secret",
+			WorkingHours: AvailabilityWorkingHoursConfig{
+				Start: "bad-value",
+				End:   "17:50",
+			},
+			Blocks: []AvailabilityBlockConfig{
+				{Name: "Morning", Start: "09:00", End: "12:00"},
+			},
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for invalid working hours")
+		}
+	})
+
+	t.Run("enabled missing working hours start", func(t *testing.T) {
+		cfg := AvailabilityConfig{
+			IsEnabled:   true,
+			CalendarURL: "https://example.com/ical.ics",
+			APIKey:      "secret",
+			WorkingHours: AvailabilityWorkingHoursConfig{
+				End: "17:50",
+			},
+			Blocks: []AvailabilityBlockConfig{
+				{Name: "Morning", Start: "09:00", End: "12:00"},
+			},
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for missing working hours start")
 		}
 	})
 

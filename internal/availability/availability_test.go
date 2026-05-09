@@ -27,8 +27,6 @@ func newTestStore(t *testing.T) *store.Store {
 func testBlocks(t *testing.T) []Block {
 	t.Helper()
 	blocks, err := ParseBlocks([]config.AvailabilityBlockConfig{
-		{Name: "First half", Start: "09:00", End: "15:00"},
-		{Name: "Second half", Start: "14:00", End: "20:00"},
 		{Name: "Morning", Start: "09:00", End: "12:00"},
 		{Name: "Afternoon", Start: "12:00", End: "16:30"},
 		{Name: "Evening", Start: "17:30", End: "22:00"},
@@ -39,21 +37,89 @@ func testBlocks(t *testing.T) []Block {
 	return blocks
 }
 
-func TestCompute_SelectsFirstUpcomingFreeBlock(t *testing.T) {
-	blocks := testBlocks(t)
-	body := `BEGIN:VCALENDAR
+func testWorkingHours(t *testing.T) WorkingHours {
+	t.Helper()
+	workingHours, err := ParseWorkingHours("09:00", "17:50")
+	if err != nil {
+		t.Fatalf("ParseWorkingHours: %v", err)
+	}
+	return workingHours
+}
+
+func londonTime(t *testing.T, year int, month time.Month, day, hour, minute int) time.Time {
+	t.Helper()
+	loc, err := time.LoadLocation("Europe/London")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	return time.Date(year, month, day, hour, minute, 0, 0, loc)
+}
+
+func baseCalendarBody() string {
+	return `BEGIN:VCALENDAR
 VERSION:2.0
 X-WR-TIMEZONE:Europe/London
-BEGIN:VEVENT
-UID:busy-1
-DTSTART:20260406T083000Z
-DTEND:20260406T090000Z
-SUMMARY:Busy
-END:VEVENT
 END:VCALENDAR`
+}
 
-	now := time.Date(2026, 4, 6, 8, 30, 0, 0, time.UTC)
-	entries, err := Compute(body, "Europe/London", blocks, now)
+func holidayCalendarBody() string {
+	return `{"england-and-wales":{"division":"england-and-wales","events":[{"date":"2026-04-06","title":"Easter Monday"},{"date":"2026-12-25","title":"Christmas Day"}]}}`
+}
+
+func TestCompute_SuppressesWeekdayWorkingHours(t *testing.T) {
+	blocks := testBlocks(t)
+	opts := ComputeOptions{
+		WorkingHours: testWorkingHours(t),
+		Now:          londonTime(t, 2026, 4, 7, 8, 30), // Tuesday
+	}
+
+	entries, err := Compute(baseCalendarBody(), "Europe/London", blocks, opts)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected availability entries")
+	}
+	if got, want := entries[0].Date, "2026-04-11"; got != want {
+		t.Fatalf("first available date: got %q, want %q", got, want)
+	}
+	if got, want := entries[0].Block, "Morning"; got != want {
+		t.Fatalf("first available block: got %q, want %q", got, want)
+	}
+}
+
+func TestCompute_AllowsWeekendBlocks(t *testing.T) {
+	blocks := testBlocks(t)
+	opts := ComputeOptions{
+		WorkingHours: testWorkingHours(t),
+		Now:          londonTime(t, 2026, 4, 11, 8, 30), // Saturday
+	}
+
+	entries, err := Compute(baseCalendarBody(), "Europe/London", blocks, opts)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected availability entries")
+	}
+	if got, want := entries[0].Date, "2026-04-11"; got != want {
+		t.Fatalf("first available date: got %q, want %q", got, want)
+	}
+	if got, want := entries[0].Block, "Morning"; got != want {
+		t.Fatalf("first available block: got %q, want %q", got, want)
+	}
+}
+
+func TestCompute_AllowsBankHolidayBlocks(t *testing.T) {
+	blocks := testBlocks(t)
+	opts := ComputeOptions{
+		WorkingHours:               testWorkingHours(t),
+		HolidayDates:               []string{"2026-04-06"},
+		ExcludeEnglandBankHolidays: true,
+		Now:                        londonTime(t, 2026, 4, 6, 8, 30), // Easter Monday
+	}
+
+	entries, err := Compute(baseCalendarBody(), "Europe/London", blocks, opts)
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
@@ -61,58 +127,84 @@ END:VCALENDAR`
 		t.Fatal("expected availability entries")
 	}
 	if got, want := entries[0].Date, "2026-04-06"; got != want {
-		t.Fatalf("first date: got %q, want %q", got, want)
+		t.Fatalf("first available date: got %q, want %q", got, want)
 	}
-	if got, want := entries[0].Block, "Second half"; got != want {
-		t.Fatalf("first block: got %q, want %q", got, want)
-	}
-	if got, want := entries[0].DayOfWeek, "Monday"; got != want {
-		t.Fatalf("first day_of_week: got %q, want %q", got, want)
+	if got, want := entries[0].Block, "Morning"; got != want {
+		t.Fatalf("first available block: got %q, want %q", got, want)
 	}
 }
 
-func TestCompute_OmitsTodayWhenNoBlockIsFree(t *testing.T) {
+func TestCompute_SkipsStartedBlocks(t *testing.T) {
+	blocks := testBlocks(t)
+	opts := ComputeOptions{
+		WorkingHours:               testWorkingHours(t),
+		HolidayDates:               []string{"2026-04-06"},
+		ExcludeEnglandBankHolidays: true,
+		Now:                        londonTime(t, 2026, 4, 6, 9, 30),
+	}
+
+	entries, err := Compute(baseCalendarBody(), "Europe/London", blocks, opts)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected availability entries")
+	}
+	if got, want := entries[0].Date, "2026-04-06"; got != want {
+		t.Fatalf("first available date: got %q, want %q", got, want)
+	}
+	if got, want := entries[0].Block, "Afternoon"; got != want {
+		t.Fatalf("first available block: got %q, want %q", got, want)
+	}
+}
+
+func TestCompute_RespectsCalendarEvents(t *testing.T) {
 	blocks := testBlocks(t)
 	body := `BEGIN:VCALENDAR
 VERSION:2.0
 X-WR-TIMEZONE:Europe/London
 BEGIN:VEVENT
-UID:busy-all-day
-DTSTART:20260406T120000Z
-DTEND:20260406T220000Z
-SUMMARY:Busy
+UID:busy-morning
+DTSTART:20260406T090000
+DTEND:20260406T103000
+SUMMARY:Busy morning
 END:VEVENT
 END:VCALENDAR`
 
-	now := time.Date(2026, 4, 6, 8, 30, 0, 0, time.UTC)
-	entries, err := Compute(body, "Europe/London", blocks, now)
+	opts := ComputeOptions{
+		WorkingHours:               testWorkingHours(t),
+		HolidayDates:               []string{"2026-04-06"},
+		ExcludeEnglandBankHolidays: true,
+		Now:                        londonTime(t, 2026, 4, 6, 8, 30),
+	}
+
+	entries, err := Compute(body, "Europe/London", blocks, opts)
 	if err != nil {
 		t.Fatalf("Compute: %v", err)
 	}
 	if len(entries) == 0 {
-		t.Fatal("expected future availability entries")
+		t.Fatal("expected availability entries")
 	}
-	if got, want := entries[0].Date, "2026-04-07"; got != want {
-		t.Fatalf("first returned day should skip today: got %q, want %q", got, want)
+	if got, want := entries[0].Date, "2026-04-06"; got != want {
+		t.Fatalf("first available date: got %q, want %q", got, want)
+	}
+	if got, want := entries[0].Block, "Afternoon"; got != want {
+		t.Fatalf("first available block: got %q, want %q", got, want)
 	}
 }
 
 func TestHandler_AuthorizationAndResponse(t *testing.T) {
 	st := newTestStore(t)
 	blocks := testBlocks(t)
-	body := `BEGIN:VCALENDAR
-VERSION:2.0
-X-WR-TIMEZONE:Europe/London
-END:VCALENDAR`
 	if err := st.SetAvailabilitySnapshot(&store.AvailabilitySnapshot{
-		Body:      body,
+		Body:      baseCalendarBody(),
 		Timezone:  "Europe/London",
 		FetchedAt: time.Now().UTC(),
 	}); err != nil {
 		t.Fatalf("SetAvailabilitySnapshot: %v", err)
 	}
 
-	h := NewHandler(st, "secret", blocks, zerolog.Nop())
+	h := NewHandler(st, "secret", blocks, testWorkingHours(t), false, zerolog.Nop())
 
 	t.Run("unauthorized", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/availability", nil)
@@ -149,9 +241,18 @@ END:VCALENDAR`
 	})
 }
 
-func TestHandler_MissingSnapshot(t *testing.T) {
+func TestHandler_HolidaySnapshotRequiredWhenEnabled(t *testing.T) {
 	st := newTestStore(t)
-	h := NewHandler(st, "secret", testBlocks(t), zerolog.Nop())
+	blocks := testBlocks(t)
+	if err := st.SetAvailabilitySnapshot(&store.AvailabilitySnapshot{
+		Body:      baseCalendarBody(),
+		Timezone:  "Europe/London",
+		FetchedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SetAvailabilitySnapshot: %v", err)
+	}
+
+	h := NewHandler(st, "secret", blocks, testWorkingHours(t), true, zerolog.Nop())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/availability", nil)
 	req.Header.Set("Authorization", "secret")
@@ -164,15 +265,12 @@ func TestHandler_MissingSnapshot(t *testing.T) {
 	}
 }
 
-func TestSyncer_StoresSnapshot(t *testing.T) {
+func TestSyncer_StoresAvailabilitySnapshot(t *testing.T) {
 	st := newTestStore(t)
-	client := &mockAvailabilityClient{
-		body: `BEGIN:VCALENDAR
-VERSION:2.0
-X-WR-TIMEZONE:Europe/London
-END:VCALENDAR`,
+	cal := &mockFetchClient{
+		body: baseCalendarBody(),
 	}
-	s := NewSyncer(st, client, zerolog.Nop())
+	s := NewSyncer(st, cal, zerolog.Nop())
 
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatalf("syncOnce: %v", err)
@@ -183,14 +281,14 @@ END:VCALENDAR`,
 		t.Fatalf("GetAvailabilitySnapshot: %v", err)
 	}
 	if !ok {
-		t.Fatal("expected stored snapshot")
+		t.Fatal("expected stored availability snapshot")
 	}
 	if snap.Body == "" || snap.Timezone != "Europe/London" {
-		t.Fatalf("unexpected snapshot: %+v", snap)
+		t.Fatalf("unexpected availability snapshot: %+v", snap)
 	}
 }
 
-func TestSyncer_PreservesSnapshotOnFetchError(t *testing.T) {
+func TestSyncer_PreservesAvailabilitySnapshotOnFetchError(t *testing.T) {
 	st := newTestStore(t)
 	seed := &store.AvailabilitySnapshot{
 		Body:      "seed",
@@ -201,8 +299,7 @@ func TestSyncer_PreservesSnapshotOnFetchError(t *testing.T) {
 		t.Fatalf("SetAvailabilitySnapshot: %v", err)
 	}
 
-	client := &mockAvailabilityClient{err: context.Canceled}
-	s := NewSyncer(st, client, zerolog.Nop())
+	s := NewSyncer(st, &mockFetchClient{err: context.Canceled}, zerolog.Nop())
 
 	if err := s.syncOnce(context.Background()); err == nil {
 		t.Fatal("expected syncOnce to fail")
@@ -220,12 +317,35 @@ func TestSyncer_PreservesSnapshotOnFetchError(t *testing.T) {
 	}
 }
 
-type mockAvailabilityClient struct {
+func TestSyncHolidaySnapshot_StoresSnapshot(t *testing.T) {
+	st := newTestStore(t)
+	client := &mockFetchClient{body: holidayCalendarBody()}
+
+	if err := SyncHolidaySnapshot(context.Background(), st, client, zerolog.Nop()); err != nil {
+		t.Fatalf("SyncHolidaySnapshot: %v", err)
+	}
+
+	snap, ok, err := st.GetHolidaySnapshot()
+	if err != nil {
+		t.Fatalf("GetHolidaySnapshot: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected stored holiday snapshot")
+	}
+	if snap.Body == "" || len(snap.Dates) != 2 {
+		t.Fatalf("unexpected holiday snapshot: %+v", snap)
+	}
+	if snap.Dates[0] != "2026-04-06" || snap.Dates[1] != "2026-12-25" {
+		t.Fatalf("unexpected holiday dates: %+v", snap.Dates)
+	}
+}
+
+type mockFetchClient struct {
 	body string
 	err  error
 }
 
-func (m *mockAvailabilityClient) Fetch(_ context.Context) ([]byte, error) {
+func (m *mockFetchClient) Fetch(_ context.Context) ([]byte, error) {
 	if m.err != nil {
 		return nil, m.err
 	}

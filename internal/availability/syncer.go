@@ -11,19 +11,19 @@ import (
 	"github.com/gldraphael/status/internal/store"
 )
 
-type calendarClient interface {
+type feedClient interface {
 	Fetch(context.Context) ([]byte, error)
 }
 
 // Syncer periodically fetches the availability calendar and stores a snapshot.
 type Syncer struct {
 	store  *store.Store
-	cal    calendarClient
+	cal    feedClient
 	logger zerolog.Logger
 }
 
 // NewSyncer creates a new Syncer.
-func NewSyncer(st *store.Store, cal calendarClient, logger zerolog.Logger) *Syncer {
+func NewSyncer(st *store.Store, cal feedClient, logger zerolog.Logger) *Syncer {
 	return &Syncer{
 		store:  st,
 		cal:    cal,

@@ -67,6 +67,11 @@ func run(logger zerolog.Logger) error {
 	})
 
 	if cfg.Availability.IsEnabled {
+		workingHours, err := availability.ParseWorkingHours(cfg.Availability.WorkingHours.Start, cfg.Availability.WorkingHours.End)
+		if err != nil {
+			return fmt.Errorf("parse availability working hours: %w", err)
+		}
+
 		availabilityClient, err := availability.NewClient(cfg.Availability.CalendarURL)
 		if err != nil {
 			return fmt.Errorf("create availability client: %w", err)
@@ -76,8 +81,14 @@ func run(logger zerolog.Logger) error {
 			return fmt.Errorf("parse availability blocks: %w", err)
 		}
 
+		if cfg.Availability.ExcludeEnglandBankHolidays {
+			if err := availability.SyncHolidaySnapshot(ctx, st, availability.NewHolidayClient(), logger); err != nil {
+				return fmt.Errorf("seed bank holidays: %w", err)
+			}
+		}
+
 		availabilitySyncer = availability.NewSyncer(st, availabilityClient, logger)
-		mux.Handle("GET /api/availability", availability.NewHandler(st, cfg.Availability.APIKey, availabilityBlocks, logger))
+		mux.Handle("GET /api/availability", availability.NewHandler(st, cfg.Availability.APIKey, availabilityBlocks, workingHours, cfg.Availability.ExcludeEnglandBankHolidays, logger))
 	}
 
 	// Start the sync loops only after all startup validation succeeds.

@@ -30,6 +30,12 @@ env: []
   #   value: "https://example.com/availability.ics"
   # - name: AVAILABILITY_API_KEY
   #   value: "secret-key"
+  # - name: AVAILABILITY_WORKING_HOURS_START
+  #   value: "09:00"
+  # - name: AVAILABILITY_WORKING_HOURS_END
+  #   value: "17:50"
+  # - name: AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS
+  #   value: "true"
 
 # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
 serviceAccount:

@@ -3,6 +3,7 @@ package store
 // Key schema:
 //   status             → current status (single-tenant)
 //   availability       → cached availability calendar snapshot
+//   availability_holidays → cached England bank holiday snapshot
 //   event:{eventID}    → Google Calendar event state
 //   channel:{channelID} → push notification channel registration
 //   sync:{calendarID}  → incremental sync token
@@ -13,6 +14,10 @@ func statusKey() []byte {
 
 func availabilityKey() []byte {
 	return []byte("availability")
+}
+
+func availabilityHolidaysKey() []byte {
+	return []byte("availability_holidays")
 }
 
 func eventKey(eventID string) []byte {
