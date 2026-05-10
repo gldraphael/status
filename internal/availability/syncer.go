@@ -1,6 +1,7 @@
 package availability
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
@@ -17,17 +18,19 @@ type feedClient interface {
 
 // Syncer periodically fetches the availability calendar and stores a snapshot.
 type Syncer struct {
-	store  *store.Store
-	cal    feedClient
-	logger zerolog.Logger
+	store    *store.Store
+	provider *Provider
+	cal      feedClient
+	logger   zerolog.Logger
 }
 
 // NewSyncer creates a new Syncer.
-func NewSyncer(st *store.Store, cal feedClient, logger zerolog.Logger) *Syncer {
+func NewSyncer(st *store.Store, provider *Provider, cal feedClient, logger zerolog.Logger) *Syncer {
 	return &Syncer{
-		store:  st,
-		cal:    cal,
-		logger: logger,
+		store:    st,
+		provider: provider,
+		cal:      cal,
+		logger:   logger,
 	}
 }
 
@@ -55,42 +58,41 @@ func (s *Syncer) Run(ctx context.Context, interval time.Duration) error {
 func (s *Syncer) syncOnce(ctx context.Context) error {
 	body, err := s.cal.Fetch(ctx)
 	if err != nil {
-		return fmt.Errorf("fetch availability calendar: %w", err)
+		s.logger.Error().Err(err).Msg("fetch availability calendar failed; using cached snapshot if available")
+	} else {
+		timezone, err := calendar.ExtractICalendarTimezone(body)
+		if err != nil {
+			return fmt.Errorf("extract availability timezone: %w", err)
+		}
+
+		snap := &store.AvailabilitySnapshot{
+			Body:      string(body),
+			Timezone:  timezone,
+			FetchedAt: time.Now().UTC(),
+		}
+		if err := s.store.SetAvailabilitySnapshot(snap); err != nil {
+			return fmt.Errorf("store availability snapshot: %w", err)
+		}
 	}
 
-	timezone, err := calendar.ExtractICalendarTimezone(body)
+	// Change detection: compare current entries with last deployed ones.
+	currentEntries, err := s.provider.GetEntriesJSON(ctx)
 	if err != nil {
-		return fmt.Errorf("extract availability timezone: %w", err)
+		return fmt.Errorf("compute current availability: %w", err)
 	}
 
-	// Compare with existing snapshot to detect changes.
-	changed := true
-	if old, ok, err := s.store.GetAvailabilitySnapshot(); err == nil && ok {
-		if old.Body == string(body) {
-			changed = false
-		}
+	lastDeployed, ok, err := s.store.GetLastDeployedAvailability()
+	if err != nil {
+		s.logger.Error().Err(err).Msg("failed to get last deployed availability")
 	}
 
-	snap := &store.AvailabilitySnapshot{
-		Body:      string(body),
-		Timezone:  timezone,
-		FetchedAt: time.Now().UTC(),
-	}
-	if err := s.store.SetAvailabilitySnapshot(snap); err != nil {
-		return fmt.Errorf("store availability snapshot: %w", err)
-	}
-
-	if changed {
-		if err := s.store.SetAvailabilityDirty(true); err != nil {
+	if !ok || !bytes.Equal(currentEntries, lastDeployed) {
+		if err := s.store.SetAvailabilityDirty(currentEntries); err != nil {
 			s.logger.Error().Err(err).Msg("failed to set availability dirty flag")
+		} else {
+			s.logger.Info().Msg("availability changed; marked as dirty for deployment")
 		}
 	}
-
-	s.logger.Info().
-		Str("timezone", timezone).
-		Time("fetchedAt", snap.FetchedAt).
-		Bool("changed", changed).
-		Msg("synced availability calendar")
 
 	return nil
 }

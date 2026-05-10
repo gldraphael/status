@@ -37,8 +37,8 @@ func TestDeployer_TriggerIfDirty(t *testing.T) {
 
 	t.Run("skips when not dirty", func(t *testing.T) {
 		client.triggered = false
-		if err := st.SetAvailabilityDirty(false); err != nil {
-			t.Fatalf("SetAvailabilityDirty: %v", err)
+		if err := st.ClearAvailabilityDirty(); err != nil {
+			t.Fatalf("ClearAvailabilityDirty: %v", err)
 		}
 
 		d.triggerIfDirty(context.Background(), time.Now())
@@ -50,7 +50,8 @@ func TestDeployer_TriggerIfDirty(t *testing.T) {
 
 	t.Run("triggers and clears when dirty", func(t *testing.T) {
 		client.triggered = false
-		if err := st.SetAvailabilityDirty(true); err != nil {
+		dirtyJSON := []byte(`[{"date":"2026-05-10"}]`)
+		if err := st.SetAvailabilityDirty(dirtyJSON); err != nil {
 			t.Fatalf("SetAvailabilityDirty: %v", err)
 		}
 
@@ -60,19 +61,28 @@ func TestDeployer_TriggerIfDirty(t *testing.T) {
 			t.Fatal("expected deploy to be triggered")
 		}
 
-		dirty, err := st.IsAvailabilityDirty()
+		_, ok, err := st.GetAvailabilityDirty()
 		if err != nil {
-			t.Fatalf("IsAvailabilityDirty: %v", err)
+			t.Fatalf("GetAvailabilityDirty: %v", err)
 		}
-		if dirty {
+		if ok {
 			t.Error("expected dirty flag to be cleared after successful deploy")
+		}
+
+		last, ok, err := st.GetLastDeployedAvailability()
+		if err != nil || !ok {
+			t.Fatalf("GetLastDeployedAvailability: %v, %v", ok, err)
+		}
+		if string(last) != string(dirtyJSON) {
+			t.Errorf("expected last deployed availability to be updated, got %s", last)
 		}
 	})
 
 	t.Run("preserves dirty on trigger error", func(t *testing.T) {
 		client.triggered = false
 		client.err = context.DeadlineExceeded
-		if err := st.SetAvailabilityDirty(true); err != nil {
+		dirtyJSON := []byte(`[{"date":"2026-05-10"}]`)
+		if err := st.SetAvailabilityDirty(dirtyJSON); err != nil {
 			t.Fatalf("SetAvailabilityDirty: %v", err)
 		}
 
@@ -82,11 +92,11 @@ func TestDeployer_TriggerIfDirty(t *testing.T) {
 			t.Fatal("expected deploy to be attempted")
 		}
 
-		dirty, err := st.IsAvailabilityDirty()
+		_, ok, err := st.GetAvailabilityDirty()
 		if err != nil {
-			t.Fatalf("IsAvailabilityDirty: %v", err)
+			t.Fatalf("GetAvailabilityDirty: %v", err)
 		}
-		if !dirty {
+		if !ok {
 			t.Error("expected dirty flag to remain set after failed deploy")
 		}
 	})

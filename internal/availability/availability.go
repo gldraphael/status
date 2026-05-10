@@ -1,12 +1,21 @@
 package availability
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/gldraphael/status/internal/calendar"
 	"github.com/gldraphael/status/internal/config"
+	"github.com/gldraphael/status/internal/store"
+)
+
+var (
+	// ErrSnapshotNotFound is returned when a required availability or holiday snapshot is missing.
+	ErrSnapshotNotFound = errors.New("snapshot not found")
 )
 
 // Block is one ordered availability window.
@@ -65,6 +74,64 @@ func ParseWorkingHours(startValue, endValue string) (WorkingHours, error) {
 		return WorkingHours{}, err
 	}
 	return WorkingHours{Start: start, End: end}, nil
+}
+
+// Provider computes and provides availability entries.
+type Provider struct {
+	store                      *store.Store
+	blocks                     []Block
+	workingHours               WorkingHours
+	excludeEnglandBankHolidays bool
+	nowFunc                    func() time.Time
+}
+
+// NewProvider creates a new availability provider.
+func NewProvider(st *store.Store, blocks []Block, workingHours WorkingHours, excludeEnglandBankHolidays bool) *Provider {
+	return &Provider{
+		store:                      st,
+		blocks:                     blocks,
+		workingHours:               workingHours,
+		excludeEnglandBankHolidays: excludeEnglandBankHolidays,
+		nowFunc:                    time.Now,
+	}
+}
+
+// GetEntries returns current availability entries.
+func (p *Provider) GetEntries(ctx context.Context) ([]Entry, error) {
+	snap, ok, err := p.store.GetAvailabilitySnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("get availability snapshot: %w", err)
+	}
+	if !ok {
+		return nil, ErrSnapshotNotFound
+	}
+
+	opts := ComputeOptions{
+		WorkingHours: p.workingHours,
+		Now:          p.nowFunc(),
+	}
+	if p.excludeEnglandBankHolidays {
+		holidaySnap, ok, err := p.store.GetHolidaySnapshot()
+		if err != nil {
+			return nil, fmt.Errorf("get bank holiday snapshot: %w", err)
+		}
+		if !ok {
+			return nil, ErrSnapshotNotFound
+		}
+		opts.ExcludeEnglandBankHolidays = true
+		opts.HolidayDates = holidaySnap.Dates
+	}
+
+	return Compute(snap.Body, snap.Timezone, p.blocks, opts)
+}
+
+// GetEntriesJSON returns current availability entries serialized as JSON.
+func (p *Provider) GetEntriesJSON(ctx context.Context) ([]byte, error) {
+	entries, err := p.GetEntries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(entries)
 }
 
 // Compute derives availability entries from a stored raw iCal body.

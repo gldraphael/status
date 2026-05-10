@@ -204,7 +204,8 @@ func TestHandler_AuthorizationAndResponse(t *testing.T) {
 		t.Fatalf("SetAvailabilitySnapshot: %v", err)
 	}
 
-	h := NewHandler(st, "secret", blocks, testWorkingHours(t), false, zerolog.Nop())
+	p := NewProvider(st, blocks, testWorkingHours(t), false)
+	h := NewHandler(p, "secret", zerolog.Nop())
 
 	t.Run("unauthorized", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/availability", nil)
@@ -252,7 +253,8 @@ func TestHandler_HolidaySnapshotRequiredWhenEnabled(t *testing.T) {
 		t.Fatalf("SetAvailabilitySnapshot: %v", err)
 	}
 
-	h := NewHandler(st, "secret", blocks, testWorkingHours(t), true, zerolog.Nop())
+	p := NewProvider(st, blocks, testWorkingHours(t), true)
+	h := NewHandler(p, "secret", zerolog.Nop())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/availability", nil)
 	req.Header.Set("Authorization", "secret")
@@ -265,12 +267,41 @@ func TestHandler_HolidaySnapshotRequiredWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestProvider_GetEntriesJSON(t *testing.T) {
+	st := newTestStore(t)
+	blocks := testBlocks(t)
+	if err := st.SetAvailabilitySnapshot(&store.AvailabilitySnapshot{
+		Body:      baseCalendarBody(),
+		Timezone:  "Europe/London",
+		FetchedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("SetAvailabilitySnapshot: %v", err)
+	}
+
+	p := NewProvider(st, blocks, testWorkingHours(t), false)
+
+	data, err := p.GetEntriesJSON(context.Background())
+	if err != nil {
+		t.Fatalf("GetEntriesJSON: %v", err)
+	}
+
+	var entries []Entry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected entries")
+	}
+}
+
 func TestSyncer_StoresAvailabilitySnapshot(t *testing.T) {
 	st := newTestStore(t)
+	blocks := testBlocks(t)
+	p := NewProvider(st, blocks, testWorkingHours(t), false)
 	cal := &mockFetchClient{
 		body: baseCalendarBody(),
 	}
-	s := NewSyncer(st, cal, zerolog.Nop())
+	s := NewSyncer(st, p, cal, zerolog.Nop())
 
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatalf("syncOnce: %v", err)
@@ -290,6 +321,8 @@ func TestSyncer_StoresAvailabilitySnapshot(t *testing.T) {
 
 func TestSyncer_PreservesAvailabilitySnapshotOnFetchError(t *testing.T) {
 	st := newTestStore(t)
+	blocks := testBlocks(t)
+	p := NewProvider(st, blocks, testWorkingHours(t), false)
 	seed := &store.AvailabilitySnapshot{
 		Body:      "seed",
 		Timezone:  "UTC",
@@ -299,7 +332,7 @@ func TestSyncer_PreservesAvailabilitySnapshotOnFetchError(t *testing.T) {
 		t.Fatalf("SetAvailabilitySnapshot: %v", err)
 	}
 
-	s := NewSyncer(st, &mockFetchClient{err: context.Canceled}, zerolog.Nop())
+	s := NewSyncer(st, p, &mockFetchClient{err: context.Canceled}, zerolog.Nop())
 
 	if err := s.syncOnce(context.Background()); err == nil {
 		t.Fatal("expected syncOnce to fail")
@@ -342,51 +375,72 @@ func TestSyncHolidaySnapshot_StoresSnapshot(t *testing.T) {
 
 func TestSyncer_SetsAvailabilityDirtyOnChanges(t *testing.T) {
 	st := newTestStore(t)
+	blocks := testBlocks(t)
+	p := NewProvider(st, blocks, testWorkingHours(t), false)
+	// Fix time to make the 10-day window deterministic.
+	p.nowFunc = func() time.Time {
+		return londonTime(t, 2026, 4, 6, 8, 30)
+	}
+
 	cal := &mockFetchClient{
 		body: baseCalendarBody(),
 	}
-	s := NewSyncer(st, cal, zerolog.Nop())
+	s := NewSyncer(st, p, cal, zerolog.Nop())
 
-	// First sync should set dirty=true since there's no old snapshot.
+	// First sync should set dirty JSON since there's no last deployed state.
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatalf("first syncOnce: %v", err)
 	}
-	dirty, err := st.IsAvailabilityDirty()
+	dirtyJSON, ok, err := st.GetAvailabilityDirty()
 	if err != nil {
-		t.Fatalf("first IsAvailabilityDirty: %v", err)
+		t.Fatalf("first GetAvailabilityDirty: %v", err)
 	}
-	if !dirty {
-		t.Error("expected dirty=true after first sync")
-	}
-
-	// Reset dirty flag to false.
-	if err := st.SetAvailabilityDirty(false); err != nil {
-		t.Fatalf("SetAvailabilityDirty(false): %v", err)
+	if !ok {
+		t.Error("expected dirty JSON after first sync")
 	}
 
-	// Second sync with same body should not set dirty=true.
+	// Pretend we deployed.
+	if err := st.SetLastDeployedAvailability(dirtyJSON); err != nil {
+		t.Fatalf("SetLastDeployedAvailability: %v", err)
+	}
+	if err := st.ClearAvailabilityDirty(); err != nil {
+		t.Fatalf("ClearAvailabilityDirty: %v", err)
+	}
+
+	// Second sync with same body should not set dirty JSON.
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatalf("second syncOnce: %v", err)
 	}
-	dirty, err = st.IsAvailabilityDirty()
+	_, ok, err = st.GetAvailabilityDirty()
 	if err != nil {
-		t.Fatalf("second IsAvailabilityDirty: %v", err)
+		t.Fatalf("second GetAvailabilityDirty: %v", err)
 	}
-	if dirty {
-		t.Error("expected dirty=false after second sync with same body")
+	if ok {
+		t.Error("expected no dirty JSON after second sync with same body")
 	}
 
-	// Third sync with different body should set dirty=true.
-	cal.body += "\n " // Add a space to change the body
+	// Third sync with different body should set dirty JSON.
+	// Add an event within the 10-day window (2026-04-06 to 2026-04-16).
+	cal.body = `BEGIN:VCALENDAR
+VERSION:2.0
+X-WR-TIMEZONE:Europe/London
+BEGIN:VEVENT
+UID:new-event
+DTSTART:20260411T090000
+DTEND:20260411T120000
+SUMMARY:New event
+END:VEVENT
+END:VCALENDAR`
+
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatalf("third syncOnce: %v", err)
 	}
-	dirty, err = st.IsAvailabilityDirty()
+	_, ok, err = st.GetAvailabilityDirty()
 	if err != nil {
-		t.Fatalf("third IsAvailabilityDirty: %v", err)
+		t.Fatalf("third GetAvailabilityDirty: %v", err)
 	}
-	if !dirty {
-		t.Error("expected dirty=true after third sync with changed body")
+	if !ok {
+		t.Error("expected dirty JSON after third sync with changed body")
 	}
 }
 
