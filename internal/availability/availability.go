@@ -241,7 +241,7 @@ func loadLocation(name string) *time.Location {
 
 func blockIsFree(events []calendar.ParsedEvent, start, end time.Time, loc *time.Location) bool {
 	for _, event := range events {
-		if event.Cancelled {
+		if event.Cancelled || !event.Busy {
 			continue
 		}
 
