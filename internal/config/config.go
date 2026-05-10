@@ -81,6 +81,9 @@ var envMapping = map[string]string{
 	"AVAILABILITY_WORKING_HOURS_START":           "availability.working_hours.start",
 	"AVAILABILITY_WORKING_HOURS_END":             "availability.working_hours.end",
 	"AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS": "availability.exclude_england_bank_holidays",
+	"BUILD_IS_ENABLED":                           "build.is_enabled",
+	"BUILD_INTERVAL":                             "build.interval",
+	"BUILD_CF_DEPLOY_HOOK":                       "build.cf_deploy_hook",
 }
 
 // configFile is the optional YAML config file loaded between defaults and env vars.
@@ -102,7 +105,7 @@ func Load() (*Config, error) {
 		"availability.working_hours.end":   "17:50",
 		"availability.exclude_england_bank_holidays": false,
 		"build.is_enabled":                           false,
-		"build.interval":                             "5m",
+		"build.interval":                             "10m",
 	}, "."), nil); err != nil {
 		return nil, fmt.Errorf("load defaults: %w", err)
 	}
