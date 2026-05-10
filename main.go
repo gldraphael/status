@@ -116,7 +116,7 @@ func run(logger zerolog.Logger) error {
 			return fmt.Errorf("parse build.interval: %w", err)
 		}
 		client := deploy.NewHookClient(cfg.Build.CfDeployHook)
-		deployer := deploy.NewDeployer(client, logger)
+		deployer := deploy.NewDeployer(client, st, logger)
 		go func() {
 			if err := deployer.Run(ctx, interval); err != nil {
 				logger.Error().Err(err).Msg("build deploy loop exited")

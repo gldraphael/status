@@ -63,6 +63,14 @@ func (s *Syncer) syncOnce(ctx context.Context) error {
 		return fmt.Errorf("extract availability timezone: %w", err)
 	}
 
+	// Compare with existing snapshot to detect changes.
+	changed := true
+	if old, ok, err := s.store.GetAvailabilitySnapshot(); err == nil && ok {
+		if old.Body == string(body) {
+			changed = false
+		}
+	}
+
 	snap := &store.AvailabilitySnapshot{
 		Body:      string(body),
 		Timezone:  timezone,
@@ -72,9 +80,16 @@ func (s *Syncer) syncOnce(ctx context.Context) error {
 		return fmt.Errorf("store availability snapshot: %w", err)
 	}
 
+	if changed {
+		if err := s.store.SetAvailabilityDirty(true); err != nil {
+			s.logger.Error().Err(err).Msg("failed to set availability dirty flag")
+		}
+	}
+
 	s.logger.Info().
 		Str("timezone", timezone).
 		Time("fetchedAt", snap.FetchedAt).
+		Bool("changed", changed).
 		Msg("synced availability calendar")
 
 	return nil

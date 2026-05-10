@@ -136,6 +136,31 @@ func (s *Store) SetAvailabilitySnapshot(snap *AvailabilitySnapshot) error {
 	return nil
 }
 
+// IsAvailabilityDirty returns true if the availability calendar has changed since the last deployment.
+func (s *Store) IsAvailabilityDirty() (bool, error) {
+	data, closer, err := s.db.Get(availabilityDirtyKey())
+	if errors.Is(err, pebble.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get availability dirty: %w", err)
+	}
+	defer closer.Close()
+	return string(data) == "true", nil
+}
+
+// SetAvailabilityDirty sets or clears the availability dirty flag.
+func (s *Store) SetAvailabilityDirty(dirty bool) error {
+	val := "false"
+	if dirty {
+		val = "true"
+	}
+	if err := s.db.Set(availabilityDirtyKey(), []byte(val), pebble.Sync); err != nil {
+		return fmt.Errorf("set availability dirty: %w", err)
+	}
+	return nil
+}
+
 // GetHolidaySnapshot returns the stored bank holiday snapshot.
 func (s *Store) GetHolidaySnapshot() (*HolidaySnapshot, bool, error) {
 	data, closer, err := s.db.Get(availabilityHolidaysKey())
