@@ -21,6 +21,10 @@ func availabilityDirtyKey() []byte {
 	return []byte("availability_dirty")
 }
 
+func availabilityLastDeployedKey() []byte {
+	return []byte("availability_last_deployed")
+}
+
 func availabilityHolidaysKey() []byte {
 	return []byte("availability_holidays")
 }

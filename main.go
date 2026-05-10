@@ -61,7 +61,8 @@ func run(logger zerolog.Logger) error {
 	targets := buildTargets(cfg)
 	syncer := calendar.NewSyncer(st, calClient, targets, logger)
 	var (
-		availabilitySyncer *availability.Syncer
+		availabilitySyncer   *availability.Syncer
+		availabilityProvider *availability.Provider
 	)
 
 	// Health-check endpoint.
@@ -91,8 +92,9 @@ func run(logger zerolog.Logger) error {
 			}
 		}
 
-		availabilitySyncer = availability.NewSyncer(st, availabilityClient, logger)
-		mux.Handle("GET /api/availability", availability.NewHandler(st, cfg.Availability.APIKey, availabilityBlocks, workingHours, cfg.Availability.ExcludeEnglandBankHolidays, logger))
+		availabilityProvider = availability.NewProvider(st, availabilityBlocks, workingHours, cfg.Availability.ExcludeEnglandBankHolidays)
+		availabilitySyncer = availability.NewSyncer(st, availabilityProvider, availabilityClient, logger)
+		mux.Handle("GET /api/availability", availability.NewHandler(availabilityProvider, cfg.Availability.APIKey, logger))
 	}
 
 	// Start the sync loops only after all startup validation succeeds.

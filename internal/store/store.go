@@ -136,27 +136,60 @@ func (s *Store) SetAvailabilitySnapshot(snap *AvailabilitySnapshot) error {
 	return nil
 }
 
-// IsAvailabilityDirty returns true if the availability calendar has changed since the last deployment.
-func (s *Store) IsAvailabilityDirty() (bool, error) {
+// GetAvailabilityDirty returns the pending availability entries JSON if the calendar has changed since the last deployment.
+func (s *Store) GetAvailabilityDirty() ([]byte, bool, error) {
 	data, closer, err := s.db.Get(availabilityDirtyKey())
 	if errors.Is(err, pebble.ErrNotFound) {
-		return false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("get availability dirty: %w", err)
+		return nil, false, fmt.Errorf("get availability dirty: %w", err)
 	}
 	defer closer.Close()
-	return string(data) == "true", nil
+
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	return buf, true, nil
 }
 
-// SetAvailabilityDirty sets or clears the availability dirty flag.
-func (s *Store) SetAvailabilityDirty(dirty bool) error {
-	val := "false"
-	if dirty {
-		val = "true"
-	}
-	if err := s.db.Set(availabilityDirtyKey(), []byte(val), pebble.Sync); err != nil {
+// SetAvailabilityDirty persists the pending availability entries JSON.
+func (s *Store) SetAvailabilityDirty(data []byte) error {
+	if err := s.db.Set(availabilityDirtyKey(), data, pebble.Sync); err != nil {
 		return fmt.Errorf("set availability dirty: %w", err)
+	}
+	return nil
+}
+
+// ClearAvailabilityDirty removes the availability dirty flag.
+func (s *Store) ClearAvailabilityDirty() error {
+	err := s.db.Delete(availabilityDirtyKey(), pebble.Sync)
+	if err != nil && !errors.Is(err, pebble.ErrNotFound) {
+		return fmt.Errorf("delete availability dirty: %w", err)
+	}
+	return nil
+}
+
+// GetLastDeployedAvailability returns the availability entries JSON from the last successful deployment.
+func (s *Store) GetLastDeployedAvailability() ([]byte, bool, error) {
+	data, closer, err := s.db.Get(availabilityLastDeployedKey())
+	if errors.Is(err, pebble.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("get availability last deployed: %w", err)
+	}
+	defer closer.Close()
+
+	// Return a copy since the closer will invalidate the slice.
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	return buf, true, nil
+}
+
+// SetLastDeployedAvailability persists the availability entries JSON from a successful deployment.
+func (s *Store) SetLastDeployedAvailability(data []byte) error {
+	if err := s.db.Set(availabilityLastDeployedKey(), data, pebble.Sync); err != nil {
+		return fmt.Errorf("set availability last deployed: %w", err)
 	}
 	return nil
 }

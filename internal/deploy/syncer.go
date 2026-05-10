@@ -65,13 +65,13 @@ func (d *Deployer) Run(ctx context.Context, interval time.Duration) error {
 }
 
 func (d *Deployer) triggerIfDirty(ctx context.Context, scheduledAt time.Time) {
-	dirty, err := d.store.IsAvailabilityDirty()
+	dirtyJSON, ok, err := d.store.GetAvailabilityDirty()
 	if err != nil {
 		d.logger.Error().Err(err).Msg("failed to check availability dirty flag; assuming clean and skipping deploy")
 		return
 	}
 
-	if !dirty {
+	if !ok {
 		d.logger.Info().Time("scheduled_at", scheduledAt).Msg("skipping deploy: no availability changes detected")
 		return
 	}
@@ -80,7 +80,10 @@ func (d *Deployer) triggerIfDirty(ctx context.Context, scheduledAt time.Time) {
 		d.logger.Error().Err(err).Time("scheduled_at", scheduledAt).Msg("deploy failed")
 	} else {
 		d.logger.Info().Time("scheduled_at", scheduledAt).Msg("deploy triggered")
-		if err := d.store.SetAvailabilityDirty(false); err != nil {
+		if err := d.store.SetLastDeployedAvailability(dirtyJSON); err != nil {
+			d.logger.Error().Err(err).Msg("failed to update last deployed availability")
+		}
+		if err := d.store.ClearAvailabilityDirty(); err != nil {
 			d.logger.Error().Err(err).Msg("failed to clear availability dirty flag")
 		}
 	}
