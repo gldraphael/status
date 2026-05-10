@@ -1,8 +1,4 @@
-# ── Build stage ───────────────────────────────────────────────────────────────
-FROM golang:1.25-alpine AS builder
-
-# gcc + musl-dev are required because pebble uses DataDog/zstd (CGO).
-RUN apk add --no-cache gcc musl-dev
+FROM golang:trixie AS builder
 
 WORKDIR /src
 
@@ -10,31 +6,14 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -o /app/status .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/status .
 
-# ── Runtime stage ──────────────────────────────────────────────────────────────
-FROM alpine:3.21 AS certs
 
-# Gather ca-certificates and tzdata for scratch image.
-RUN apk add --no-cache ca-certificates tzdata
-
-# ── Final stage (rootless scratch) ─────────────────────────────────────────────
-FROM scratch
-
-COPY --from=certs /etc/ssl/certs /etc/ssl/certs
-COPY --from=certs /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=certs /etc/passwd /etc/passwd
-COPY --from=certs /lib/ld-musl-x86_64.so.1 /lib/
-COPY --from=certs /lib/libc.musl-x86_64.so.1 /lib/
-
-# Copy the built binary from the builder stage
-COPY --from=builder /app /app
-
-# Rootless: run as nonroot user (uid 65534).
-USER 65534
-
-WORKDIR /app
+FROM gcr.io/distroless/static-debian13
 
 EXPOSE 8080
+WORKDIR /app
+
+COPY --from=builder /app/status /app/status
 
 ENTRYPOINT ["/app/status"]
