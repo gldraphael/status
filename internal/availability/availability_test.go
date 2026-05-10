@@ -340,6 +340,56 @@ func TestSyncHolidaySnapshot_StoresSnapshot(t *testing.T) {
 	}
 }
 
+func TestSyncer_SetsAvailabilityDirtyOnChanges(t *testing.T) {
+	st := newTestStore(t)
+	cal := &mockFetchClient{
+		body: baseCalendarBody(),
+	}
+	s := NewSyncer(st, cal, zerolog.Nop())
+
+	// First sync should set dirty=true since there's no old snapshot.
+	if err := s.syncOnce(context.Background()); err != nil {
+		t.Fatalf("first syncOnce: %v", err)
+	}
+	dirty, err := st.IsAvailabilityDirty()
+	if err != nil {
+		t.Fatalf("first IsAvailabilityDirty: %v", err)
+	}
+	if !dirty {
+		t.Error("expected dirty=true after first sync")
+	}
+
+	// Reset dirty flag to false.
+	if err := st.SetAvailabilityDirty(false); err != nil {
+		t.Fatalf("SetAvailabilityDirty(false): %v", err)
+	}
+
+	// Second sync with same body should not set dirty=true.
+	if err := s.syncOnce(context.Background()); err != nil {
+		t.Fatalf("second syncOnce: %v", err)
+	}
+	dirty, err = st.IsAvailabilityDirty()
+	if err != nil {
+		t.Fatalf("second IsAvailabilityDirty: %v", err)
+	}
+	if dirty {
+		t.Error("expected dirty=false after second sync with same body")
+	}
+
+	// Third sync with different body should set dirty=true.
+	cal.body += "\n " // Add a space to change the body
+	if err := s.syncOnce(context.Background()); err != nil {
+		t.Fatalf("third syncOnce: %v", err)
+	}
+	dirty, err = st.IsAvailabilityDirty()
+	if err != nil {
+		t.Fatalf("third IsAvailabilityDirty: %v", err)
+	}
+	if !dirty {
+		t.Error("expected dirty=true after third sync with changed body")
+	}
+}
+
 type mockFetchClient struct {
 	body string
 	err  error

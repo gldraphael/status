@@ -73,6 +73,7 @@ This repository is a Go service that syncs calendar status and exposes availabil
 ## Cloudflare Pages auto-deploy
 
 - Feature: When enabled, the application triggers a Cloudflare Pages deployment at a regular interval.
+- Change Tracking: To save build minutes, deployments are only triggered if the availability calendar has changed since the last successful deployment. This is tracked via the `availability_dirty` key in Pebble.
 - Config keys: `build.is_enabled` (bool), `build.interval` (Go duration string, e.g., "10m"), `build.cf_deploy_hook` (Pages Build Hook URL).
 - Scheduling: Deploys are scheduled to always fall offset by one minute after the hour. Example: with `build.interval = 10m` deploys occur at HH:01, HH:11, HH:21, ... This reduces the chance of syncing stale calendar events that commonly start at round minutes (e.g., HH:20, HH:30).
 - Security: Do not commit `build.cf_deploy_hook` into source control; provide it via `config.yaml` or the `BUILD_CF_DEPLOY_HOOK` environment variable.

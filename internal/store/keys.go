@@ -3,6 +3,7 @@ package store
 // Key schema:
 //   status             → current status (single-tenant)
 //   availability       → cached availability calendar snapshot
+//   availability_dirty → flag indicating availability changed since last deploy
 //   availability_holidays → cached England bank holiday snapshot
 //   event:{eventID}    → Google Calendar event state
 //   channel:{channelID} → push notification channel registration
@@ -14,6 +15,10 @@ func statusKey() []byte {
 
 func availabilityKey() []byte {
 	return []byte("availability")
+}
+
+func availabilityDirtyKey() []byte {
+	return []byte("availability_dirty")
 }
 
 func availabilityHolidaysKey() []byte {

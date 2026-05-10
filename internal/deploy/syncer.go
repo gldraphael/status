@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+
+	"github.com/gldraphael/status/internal/store"
 )
 
 // Client defines the minimal interface the Deployer needs to trigger a build.
@@ -16,12 +18,13 @@ type Client interface {
 // Deployer periodically triggers builds using the provided Client.
 type Deployer struct {
 	client Client
+	store  *store.Store
 	logger zerolog.Logger
 }
 
 // NewDeployer constructs a Deployer.
-func NewDeployer(client Client, logger zerolog.Logger) *Deployer {
-	return &Deployer{client: client, logger: logger}
+func NewDeployer(client Client, st *store.Store, logger zerolog.Logger) *Deployer {
+	return &Deployer{client: client, store: st, logger: logger}
 }
 
 // Run starts the deploy loop. It schedules the first deploy at the next time
@@ -46,11 +49,7 @@ func (d *Deployer) Run(ctx context.Context, interval time.Duration) error {
 	}
 
 	// Trigger on the scheduled time.
-	if err := d.client.Trigger(ctx); err != nil {
-		d.logger.Error().Err(err).Time("scheduled_at", first).Msg("deploy on schedule")
-	} else {
-		d.logger.Info().Time("scheduled_at", first).Msg("deploy triggered")
-	}
+	d.triggerIfDirty(ctx, first)
 
 	// Then repeat at the configured interval.
 	ticker := time.NewTicker(interval)
@@ -60,11 +59,29 @@ func (d *Deployer) Run(ctx context.Context, interval time.Duration) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := d.client.Trigger(ctx); err != nil {
-				d.logger.Error().Err(err).Msg("deploy cycle")
-			} else {
-				d.logger.Info().Msg("deploy triggered")
-			}
+			d.triggerIfDirty(ctx, time.Now())
+		}
+	}
+}
+
+func (d *Deployer) triggerIfDirty(ctx context.Context, scheduledAt time.Time) {
+	dirty, err := d.store.IsAvailabilityDirty()
+	if err != nil {
+		d.logger.Error().Err(err).Msg("failed to check availability dirty flag; assuming clean and skipping deploy")
+		return
+	}
+
+	if !dirty {
+		d.logger.Info().Time("scheduled_at", scheduledAt).Msg("skipping deploy: no availability changes detected")
+		return
+	}
+
+	if err := d.client.Trigger(ctx); err != nil {
+		d.logger.Error().Err(err).Time("scheduled_at", scheduledAt).Msg("deploy failed")
+	} else {
+		d.logger.Info().Time("scheduled_at", scheduledAt).Msg("deploy triggered")
+		if err := d.store.SetAvailabilityDirty(false); err != nil {
+			d.logger.Error().Err(err).Msg("failed to clear availability dirty flag")
 		}
 	}
 }
