@@ -14,6 +14,7 @@ import (
 	"github.com/gldraphael/status/internal/availability"
 	"github.com/gldraphael/status/internal/calendar"
 	"github.com/gldraphael/status/internal/config"
+	deploy "github.com/gldraphael/status/internal/deploy"
 	githubTarget "github.com/gldraphael/status/internal/github"
 	"github.com/gldraphael/status/internal/server"
 	"github.com/gldraphael/status/internal/store"
@@ -34,6 +35,9 @@ func run(logger zerolog.Logger) error {
 	}
 	if err := cfg.Availability.Validate(); err != nil {
 		return fmt.Errorf("validate availability config: %w", err)
+	}
+	if err := cfg.Build.Validate(); err != nil {
+		return fmt.Errorf("validate build config: %w", err)
 	}
 
 	// Clear any persisted data on startup to ensure a fresh sync from the calendar.
@@ -101,6 +105,21 @@ func run(logger zerolog.Logger) error {
 		go func() {
 			if err := availabilitySyncer.Run(ctx, 5*time.Minute); err != nil {
 				logger.Error().Err(err).Msg("availability sync loop exited")
+			}
+		}()
+	}
+
+	// Start deploy loop if enabled.
+	if cfg.Build.IsEnabled {
+		interval, err := time.ParseDuration(cfg.Build.Interval)
+		if err != nil {
+			return fmt.Errorf("parse build.interval: %w", err)
+		}
+		client := deploy.NewHookClient(cfg.Build.CfDeployHook)
+		deployer := deploy.NewDeployer(client, logger)
+		go func() {
+			if err := deployer.Run(ctx, interval); err != nil {
+				logger.Error().Err(err).Msg("build deploy loop exited")
 			}
 		}()
 	}
