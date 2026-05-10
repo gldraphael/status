@@ -20,6 +20,7 @@ type Config struct {
 
 	Targets      TargetsConfig      `koanf:"targets"`
 	Availability AvailabilityConfig `koanf:"availability"`
+	Build        BuildConfig        `koanf:"build"`
 }
 
 // TargetsConfig holds the configuration for each supported status target.
@@ -59,6 +60,15 @@ type AvailabilityBlockConfig struct {
 
 // envMapping maps environment variable names to koanf config keys.
 // Only variables listed here are loaded; all others are ignored.
+// BuildConfig configures automatic builds/deploys.
+type BuildConfig struct {
+	IsEnabled    bool   `koanf:"is_enabled"`
+	Interval     string `koanf:"interval"`
+	CfDeployHook string `koanf:"cf_deploy_hook"`
+}
+
+// envMapping maps environment variable names to koanf config keys.
+// Only variables listed here are loaded; all others are ignored.
 var envMapping = map[string]string{
 	"PORT":                                       "port",
 	"PEBBLE_PATH":                                "pebble_path",
@@ -91,6 +101,8 @@ func Load() (*Config, error) {
 		"availability.working_hours.start": "09:00",
 		"availability.working_hours.end":   "17:50",
 		"availability.exclude_england_bank_holidays": false,
+		"build.is_enabled":                           false,
+		"build.interval":                             "5m",
 	}, "."), nil); err != nil {
 		return nil, fmt.Errorf("load defaults: %w", err)
 	}
@@ -174,4 +186,25 @@ func parseClockRange(startValue, endValue string) (time.Time, time.Time, error) 
 		return time.Time{}, time.Time{}, fmt.Errorf("end must be after start")
 	}
 	return start, end, nil
+}
+
+// Validate checks the configured build settings.
+func (b BuildConfig) Validate() error {
+	if !b.IsEnabled {
+		return nil
+	}
+	if strings.TrimSpace(b.Interval) == "" {
+		return fmt.Errorf("build.interval is required when build is enabled")
+	}
+	dur, err := time.ParseDuration(b.Interval)
+	if err != nil {
+		return fmt.Errorf("build.interval: %w", err)
+	}
+	if dur < time.Minute {
+		return fmt.Errorf("build.interval must be at least 1m")
+	}
+	if strings.TrimSpace(b.CfDeployHook) == "" {
+		return fmt.Errorf("build.cf_deploy_hook is required when build is enabled")
+	}
+	return nil
 }

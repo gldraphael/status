@@ -69,3 +69,11 @@ This repository is a Go service that syncs calendar status and exposes availabil
 - On weekdays, blocks that overlap working hours are suppressed unless the day is a bank holiday and holiday exclusion is enabled.
 - If the availability config is enabled but incomplete, startup should fail fast.
 - The app is designed for a single user; multi-user support would require key design changes.
+
+## Cloudflare Pages auto-deploy
+
+- Feature: When enabled, the application triggers a Cloudflare Pages deployment at a regular interval.
+- Config keys: `build.is_enabled` (bool), `build.interval` (Go duration string, e.g., "10m"), `build.cf_deploy_hook` (Pages Build Hook URL).
+- Scheduling: Deploys are scheduled to always fall offset by one minute after the hour. Example: with `build.interval = 10m` deploys occur at HH:01, HH:11, HH:21, ... This reduces the chance of syncing stale calendar events that commonly start at round minutes (e.g., HH:20, HH:30).
+- Security: Do not commit `build.cf_deploy_hook` into source control; provide it via `config.yaml` or the `BUILD_CF_DEPLOY_HOOK` environment variable.
+
