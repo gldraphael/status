@@ -19,6 +19,7 @@ type ParsedEvent struct {
 	StartTime time.Time
 	EndTime   time.Time
 	Cancelled bool
+	Busy      bool
 }
 
 // ParsedCalendar is the parsed representation of an iCal feed.
@@ -97,6 +98,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 		startTime time.Time
 		endTime   time.Time
 		cancelled bool
+		busy      bool
 		rrule     string
 	}
 
@@ -114,6 +116,11 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 		}
 		status := event.GetProperty(ics.ComponentPropertyStatus)
 		cancelled := status != nil && status.Value == "CANCELLED"
+
+		busy := true
+		if transp := event.GetProperty(ics.ComponentPropertyTransp); transp != nil {
+			busy = strings.ToUpper(transp.Value) == "OPAQUE"
+		}
 
 		startAt, err := event.GetStartAt()
 		if err != nil {
@@ -133,6 +140,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 			startTime: startAt,
 			endTime:   endAt,
 			cancelled: cancelled,
+			busy:      busy,
 		}
 		if rruleProp := event.GetProperty(ics.ComponentPropertyRrule); rruleProp != nil {
 			base.rrule = rruleProp.Value
@@ -151,6 +159,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 					StartTime: base.startTime,
 					EndTime:   base.endTime,
 					Cancelled: base.cancelled,
+					Busy:      base.busy,
 				})
 			}
 			continue
@@ -174,6 +183,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 						StartTime: inst,
 						EndTime:   endAt,
 						Cancelled: base.cancelled,
+						Busy:      base.busy,
 					})
 				}
 				continue
@@ -187,6 +197,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 				StartTime: base.startTime,
 				EndTime:   base.endTime,
 				Cancelled: base.cancelled,
+				Busy:      base.busy,
 			})
 		}
 	}

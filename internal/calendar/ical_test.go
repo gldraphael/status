@@ -378,3 +378,64 @@ END:VCALENDAR`
 		t.Fatalf("timezone: got %q, want %q", tz, "Europe/London")
 	}
 }
+
+func TestParseICalendar_Transparency(t *testing.T) {
+	icalData := `BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:busy-event
+DTSTART:20260406T100000Z
+DTEND:20260406T110000Z
+SUMMARY:Busy Event
+TRANSP:OPAQUE
+END:VEVENT
+BEGIN:VEVENT
+UID:free-event
+DTSTART:20260406T120000Z
+DTEND:20260406T130000Z
+SUMMARY:Free Event
+TRANSP:TRANSPARENT
+END:VEVENT
+BEGIN:VEVENT
+UID:default-busy-event
+DTSTART:20260406T140000Z
+DTEND:20260406T150000Z
+SUMMARY:Default Busy Event
+END:VEVENT
+END:VCALENDAR`
+
+	now := time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC)
+	events, err := parseICalendar([]byte(icalData), now)
+	if err != nil {
+		t.Fatalf("parseICalendar: %v", err)
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events, got %d", len(events))
+	}
+
+	tests := []struct {
+		summary string
+		busy    bool
+	}{
+		{"Busy Event", true},
+		{"Free Event", false},
+		{"Default Busy Event", true},
+	}
+
+	for _, tt := range tests {
+		found := false
+		for _, ev := range events {
+			if ev.Summary == tt.summary {
+				found = true
+				if ev.Busy != tt.busy {
+					t.Errorf("%s: Busy got %v, want %v", tt.summary, ev.Busy, tt.busy)
+				}
+				break
+			}
+		}
+		if !found {
+			t.Errorf("could not find event: %s", tt.summary)
+		}
+	}
+}

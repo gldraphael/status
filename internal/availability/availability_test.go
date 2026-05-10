@@ -193,6 +193,43 @@ END:VCALENDAR`
 	}
 }
 
+func TestCompute_IgnoresTransparentEvents(t *testing.T) {
+	blocks := testBlocks(t)
+	body := `BEGIN:VCALENDAR
+VERSION:2.0
+X-WR-TIMEZONE:Europe/London
+BEGIN:VEVENT
+UID:free-morning
+DTSTART:20260406T090000
+DTEND:20260406T103000
+SUMMARY:Free morning
+TRANSP:TRANSPARENT
+END:VEVENT
+END:VCALENDAR`
+
+	opts := ComputeOptions{
+		WorkingHours:               testWorkingHours(t),
+		HolidayDates:               []string{"2026-04-06"},
+		ExcludeEnglandBankHolidays: true,
+		Now:                        londonTime(t, 2026, 4, 6, 8, 30),
+	}
+
+	entries, err := Compute(body, "Europe/London", blocks, opts)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected availability entries")
+	}
+	// With the transparent event, the Morning block should still be available.
+	if got, want := entries[0].Date, "2026-04-06"; got != want {
+		t.Fatalf("first available date: got %q, want %q", got, want)
+	}
+	if got, want := entries[0].Block, "Morning"; got != want {
+		t.Fatalf("first available block: got %q, want %q", got, want)
+	}
+}
+
 func TestHandler_AuthorizationAndResponse(t *testing.T) {
 	st := newTestStore(t)
 	blocks := testBlocks(t)
