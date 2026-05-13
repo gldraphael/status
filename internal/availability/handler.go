@@ -31,7 +31,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := h.provider.GetEntries(r.Context())
+	entries, err := h.provider.GetEntries()
 	if err != nil {
 		if errors.Is(err, ErrSnapshotNotFound) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)

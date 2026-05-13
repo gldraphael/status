@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"time"
 
 	"github.com/rs/zerolog"
 
+	"github.com/gldraphael/status/internal/feed"
 	"github.com/gldraphael/status/internal/store"
 )
 
@@ -27,27 +26,10 @@ func NewHolidayClient() *HolidayClient {
 
 // Fetch returns the raw bank-holidays JSON body.
 func (c *HolidayClient) Fetch(ctx context.Context) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	body, err := feed.FetchBody(ctx, c.url, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("fetch bank holidays: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch bank holidays: unexpected status %s", resp.Status)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
 	return body, nil
 }
 

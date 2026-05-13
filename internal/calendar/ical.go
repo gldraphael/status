@@ -3,13 +3,13 @@ package calendar
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
 	ics "github.com/arran4/golang-ical"
 	"github.com/teambition/rrule-go"
+
+	"github.com/gldraphael/status/internal/feed"
 )
 
 // ParsedEvent is an event extracted from an iCal file.
@@ -30,27 +30,10 @@ type ParsedCalendar struct {
 
 // FetchICalendarBody fetches the raw iCal body from the given URL.
 func FetchICalendarBody(ctx context.Context, calendarURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, calendarURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	body, err := feed.FetchBody(ctx, calendarURL, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("fetch calendar: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch calendar: unexpected status %s", resp.Status)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
 	return body, nil
 }
 
@@ -212,25 +195,6 @@ func ExtractICalendarTimezone(data []byte) (string, error) {
 		return "", fmt.Errorf("parse calendar: %w", err)
 	}
 	return calendarTimezone(cal), nil
-}
-
-// parseICalendar is a compatibility wrapper used by the existing tests.
-func parseICalendar(data interface{}, now time.Time) ([]ParsedEvent, error) {
-	var body []byte
-	switch v := data.(type) {
-	case []byte:
-		body = v
-	case string:
-		body = []byte(v)
-	default:
-		return nil, fmt.Errorf("unsupported data type")
-	}
-
-	parsed, err := ParseICalendar(body, now.Add(-24*time.Hour), now.Add(24*time.Hour))
-	if err != nil {
-		return nil, err
-	}
-	return parsed.Events, nil
 }
 
 func calendarTimezone(cal *ics.Calendar) string {

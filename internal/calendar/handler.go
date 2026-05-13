@@ -8,6 +8,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/gldraphael/status/internal/poll"
 	"github.com/gldraphael/status/internal/store"
 	"github.com/gldraphael/status/internal/target"
 )
@@ -38,24 +39,15 @@ func NewSyncer(st *store.Store, cal calendarClient, targets []target.Target, log
 // Run starts the sync loop, fetching events and syncing status at the given interval.
 // Run blocks until ctx is cancelled.
 func (s *Syncer) Run(ctx context.Context, interval time.Duration) error {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	// Sync immediately on startup.
-	if err := s.syncOnce(ctx); err != nil {
-		s.logger.Error().Err(err).Msg("sync on startup")
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err := s.syncOnce(ctx); err != nil {
-				s.logger.Error().Err(err).Msg("sync cycle")
-			}
+	return poll.Every(ctx, interval, func() error {
+		return s.syncOnce(ctx)
+	}, func(err error, startup bool) {
+		msg := "sync cycle"
+		if startup {
+			msg = "sync on startup"
 		}
-	}
+		s.logger.Error().Err(err).Msg(msg)
+	})
 }
 
 func (s *Syncer) syncOnce(ctx context.Context) error {

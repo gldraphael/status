@@ -1,7 +1,10 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -9,109 +12,107 @@ import (
 	"github.com/gldraphael/status/internal/target"
 )
 
-func TestBuildGraphQLMutation_WithStatus(t *testing.T) {
+func TestBuildGraphQLPayload_WithStatus(t *testing.T) {
 	st := &target.Status{
 		Emoji:      ":rocket:",
 		Text:       "Shipping a new feature",
 		Expiration: time.Date(2026, 4, 7, 0, 0, 0, 0, time.UTC),
 	}
 
-	mutation := buildGraphQLMutation(st)
+	payload := buildGraphQLPayload(st)
 
-	// Verify the mutation contains the expected components
-	if !strings.Contains(mutation, `changeUserStatus`) {
+	if !strings.Contains(payload.Query, `changeUserStatus`) {
 		t.Errorf("mutation missing changeUserStatus")
 	}
-	if !strings.Contains(mutation, `"Shipping a new feature"`) {
-		t.Errorf("mutation missing message: %s", mutation)
+	input := payload.Variables["input"].(map[string]string)
+	if input["message"] != "Shipping a new feature" {
+		t.Errorf("message: got %q", input["message"])
 	}
-	if !strings.Contains(mutation, `":rocket:"`) {
-		t.Errorf("mutation missing emoji: %s", mutation)
+	if input["emoji"] != ":rocket:" {
+		t.Errorf("emoji: got %q", input["emoji"])
 	}
-	if !strings.Contains(mutation, `2026-04-07T00:00:00Z`) {
-		t.Errorf("mutation missing expiry: %s", mutation)
+	if input["expiresAt"] != "2026-04-07T00:00:00Z" {
+		t.Errorf("expiresAt: got %q", input["expiresAt"])
 	}
 }
 
-func TestBuildGraphQLMutation_NoExpiry(t *testing.T) {
+func TestBuildGraphQLPayload_NoExpiry(t *testing.T) {
 	st := &target.Status{
 		Emoji: ":calendar:",
 		Text:  "In a meeting",
 	}
 
-	mutation := buildGraphQLMutation(st)
+	payload := buildGraphQLPayload(st)
+	input := payload.Variables["input"].(map[string]string)
 
-	// Should not have expiresAt in the input when expiration is zero
-	// Check only the input part (before the closing bracket)
-	inputPart := strings.Split(mutation, "}")[0]
-	if strings.Contains(inputPart, `expiresAt`) {
-		t.Errorf("mutation input should not have expiresAt: %s", mutation)
+	if _, ok := input["expiresAt"]; ok {
+		t.Errorf("input should not have expiresAt: %+v", input)
 	}
-	if !strings.Contains(mutation, `"In a meeting"`) {
-		t.Errorf("mutation missing message")
+	if input["message"] != "In a meeting" {
+		t.Errorf("message: got %q", input["message"])
 	}
 }
 
-func TestBuildGraphQLMutation_ClearsStatus(t *testing.T) {
-	mutation := buildGraphQLMutation(nil)
+func TestBuildGraphQLPayload_ClearsStatus(t *testing.T) {
+	payload := buildGraphQLPayload(nil)
+	input := payload.Variables["input"].(map[string]string)
 
-	// Clearing status uses empty strings
-	if !strings.Contains(mutation, `message: ""`) {
-		t.Errorf("mutation should clear message: %s", mutation)
+	if input["message"] != "" {
+		t.Errorf("message: got %q, want empty", input["message"])
 	}
-	if !strings.Contains(mutation, `emoji: ""`) {
-		t.Errorf("mutation should clear emoji: %s", mutation)
-	}
-}
-
-func TestEscapeGraphQLString_WithQuotes(t *testing.T) {
-	result := escapeGraphQLString(`It's "quoted"`)
-	expected := `"It's \"quoted\""`
-	if result != expected {
-		t.Errorf("escapeGraphQLString: got %q, want %q", result, expected)
+	if input["emoji"] != "" {
+		t.Errorf("emoji: got %q, want empty", input["emoji"])
 	}
 }
 
-func TestEscapeGraphQLString_WithBackslash(t *testing.T) {
-	result := escapeGraphQLString(`C:\path\to\file`)
-	expected := `"C:\\path\\to\\file"`
-	if result != expected {
-		t.Errorf("escapeGraphQLString: got %q, want %q", result, expected)
-	}
-}
-
-func TestEscapeGraphQLString_Empty(t *testing.T) {
-	result := escapeGraphQLString("")
-	expected := `""`
-	if result != expected {
-		t.Errorf("escapeGraphQLString: got %q, want %q", result, expected)
-	}
-}
-
-func TestGraphQLMutation_IsValidJSON(t *testing.T) {
+func TestGraphQLPayload_IsValidJSON(t *testing.T) {
 	st := &target.Status{
 		Emoji:      ":smile:",
 		Text:       "All systems operational",
 		Expiration: time.Now().UTC().Add(2 * time.Hour),
 	}
 
-	mutation := buildGraphQLMutation(st)
-	payload := map[string]string{"query": mutation}
-
-	// Should be serializable to JSON
+	payload := buildGraphQLPayload(st)
 	data, err := json.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal to json: %v", err)
 	}
 
-	// Verify it can be unmarshaled
-	var decoded map[string]string
+	var decoded map[string]any
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal from json: %v", err)
 	}
 
 	if _, ok := decoded["query"]; !ok {
 		t.Errorf("decoded json missing query field")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestSync_DoesNotMutateStatusWhenExtractingEmoji(t *testing.T) {
+	tgt := NewTarget("test-token")
+	tgt.client = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(`{"data":{"changeUserStatus":{"status":{}}}}`)),
+				Request:    req,
+			}, nil
+		}),
+	}
+
+	st := &target.Status{Emoji: ":calendar:", Text: "💡 Focusing"}
+	if err := tgt.Sync(context.Background(), st); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	if st.Emoji != ":calendar:" || st.Text != "💡 Focusing" {
+		t.Fatalf("status was mutated: %+v", st)
 	}
 }
 

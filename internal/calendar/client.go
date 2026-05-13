@@ -29,7 +29,6 @@ type ChangedEvent struct {
 }
 
 // FetchEvents fetches all events from the iCal URL.
-// The syncToken parameter is ignored (kept for compatibility).
 func (c *Client) FetchEvents(ctx context.Context) ([]ChangedEvent, error) {
 	parsed, err := FetchAndParseICalendar(ctx, c.calendarURL)
 	if err != nil {

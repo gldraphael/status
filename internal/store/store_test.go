@@ -157,6 +157,58 @@ func TestHolidaySnapshot_SetGet(t *testing.T) {
 	}
 }
 
+func TestAvailabilityDeploymentState_SetGetClear(t *testing.T) {
+	st := newTestStore(t)
+
+	_, ok, err := st.GetAvailabilityDirty()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected dirty state not found before set")
+	}
+
+	dirty := []byte(`[{"date":"2026-04-06","block":"Morning"}]`)
+	if err := st.SetAvailabilityDirty(dirty); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := st.GetAvailabilityDirty()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected dirty state after set")
+	}
+	if string(got) != string(dirty) {
+		t.Fatalf("dirty mismatch: got %s, want %s", got, dirty)
+	}
+
+	if err := st.SetLastDeployedAvailability(got); err != nil {
+		t.Fatal(err)
+	}
+	last, ok, err := st.GetLastDeployedAvailability()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected last deployed state after set")
+	}
+	if string(last) != string(dirty) {
+		t.Fatalf("last deployed mismatch: got %s, want %s", last, dirty)
+	}
+
+	if err := st.ClearAvailabilityDirty(); err != nil {
+		t.Fatal(err)
+	}
+	_, ok, err = st.GetAvailabilityDirty()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected dirty state to be cleared")
+	}
+}
+
 func TestEvent_SetGet(t *testing.T) {
 	st := newTestStore(t)
 
@@ -292,75 +344,5 @@ func TestListActiveEvents_Empty(t *testing.T) {
 	}
 	if len(active) != 0 {
 		t.Errorf("expected 0 active events, got %d", len(active))
-	}
-}
-
-func TestChannel_SetGet(t *testing.T) {
-	st := newTestStore(t)
-
-	_, ok, err := st.GetChannel("ch1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Fatal("expected not found before set")
-	}
-
-	want := &store.Channel{
-		ID:         "ch1",
-		ResourceID: "res1",
-		CalendarID: "primary",
-		UserID:     "alice",
-		Expiry:     time.Now().Add(7 * 24 * time.Hour).Truncate(time.Millisecond),
-	}
-	if err := st.SetChannel(want); err != nil {
-		t.Fatal(err)
-	}
-
-	got, ok, err := st.GetChannel("ch1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("expected found after set")
-	}
-	if got.ID != want.ID || got.ResourceID != want.ResourceID || got.UserID != want.UserID {
-		t.Errorf("channel mismatch: got %+v, want %+v", got, want)
-	}
-}
-
-func TestSyncToken_SetGet(t *testing.T) {
-	st := newTestStore(t)
-
-	_, ok, err := st.GetSyncToken("primary")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ok {
-		t.Fatal("expected not found before set")
-	}
-
-	if err := st.SetSyncToken("primary", "token-abc123"); err != nil {
-		t.Fatal(err)
-	}
-
-	got, ok, err := st.GetSyncToken("primary")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("expected found after set")
-	}
-	if got != "token-abc123" {
-		t.Errorf("got token %q, want %q", got, "token-abc123")
-	}
-
-	// Overwrite.
-	if err := st.SetSyncToken("primary", "token-xyz789"); err != nil {
-		t.Fatal(err)
-	}
-	got, _, _ = st.GetSyncToken("primary")
-	if got != "token-xyz789" {
-		t.Errorf("got token %q, want %q", got, "token-xyz789")
 	}
 }

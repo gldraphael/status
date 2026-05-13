@@ -317,7 +317,7 @@ func TestProvider_GetEntriesJSON(t *testing.T) {
 
 	p := NewProvider(st, blocks, testWorkingHours(t), false)
 
-	data, err := p.GetEntriesJSON(context.Background())
+	data, err := p.GetEntriesJSON()
 	if err != nil {
 		t.Fatalf("GetEntriesJSON: %v", err)
 	}

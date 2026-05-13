@@ -58,8 +58,6 @@ type AvailabilityBlockConfig struct {
 	End   string `koanf:"end"`   // HH:MM, 24-hour clock
 }
 
-// envMapping maps environment variable names to koanf config keys.
-// Only variables listed here are loaded; all others are ignored.
 // BuildConfig configures automatic builds/deploys.
 type BuildConfig struct {
 	IsEnabled    bool   `koanf:"is_enabled"`
@@ -74,7 +72,6 @@ var envMapping = map[string]string{
 	"PEBBLE_PATH":                                "pebble_path",
 	"CALENDAR_URL":                               "calendar_url",
 	"GITHUB_TOKEN":                               "targets.github.token",
-	"GITHUB_USERNAME":                            "targets.github.username",
 	"AVAILABILITY_IS_ENABLED":                    "availability.is_enabled",
 	"AVAILABILITY_CALENDAR_URL":                  "availability.calendar_url",
 	"AVAILABILITY_API_KEY":                       "availability.api_key",
@@ -196,18 +193,27 @@ func (b BuildConfig) Validate() error {
 	if !b.IsEnabled {
 		return nil
 	}
+	_, err := b.IntervalDuration()
+	return err
+}
+
+// IntervalDuration returns the validated build interval.
+func (b BuildConfig) IntervalDuration() (time.Duration, error) {
+	if !b.IsEnabled {
+		return 0, nil
+	}
 	if strings.TrimSpace(b.Interval) == "" {
-		return fmt.Errorf("build.interval is required when build is enabled")
+		return 0, fmt.Errorf("build.interval is required when build is enabled")
 	}
 	dur, err := time.ParseDuration(b.Interval)
 	if err != nil {
-		return fmt.Errorf("build.interval: %w", err)
+		return 0, fmt.Errorf("build.interval: %w", err)
 	}
 	if dur < time.Minute {
-		return fmt.Errorf("build.interval must be at least 1m")
+		return 0, fmt.Errorf("build.interval must be at least 1m")
 	}
 	if strings.TrimSpace(b.CfDeployHook) == "" {
-		return fmt.Errorf("build.cf_deploy_hook is required when build is enabled")
+		return 0, fmt.Errorf("build.cf_deploy_hook is required when build is enabled")
 	}
-	return nil
+	return dur, nil
 }

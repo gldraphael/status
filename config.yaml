@@ -44,3 +44,11 @@ availability:
     - name: Evening
       start: "17:30"
       end: "22:00"
+
+build:
+  # Disabled by default. Set to true to trigger Cloudflare Pages deploys when availability changes.
+  is_enabled: false
+  # Deploy checks are aligned to HH:01, HH:11, HH:21, ... when interval is 10m.
+  interval: 10m
+  # Cloudflare Pages build hook URL. Prefer BUILD_CF_DEPLOY_HOOK for secrets.
+  cf_deploy_hook: ""

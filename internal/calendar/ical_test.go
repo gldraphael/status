@@ -9,6 +9,14 @@ import (
 	"time"
 )
 
+func parseEvents(data string, now time.Time) ([]ParsedEvent, error) {
+	parsed, err := ParseICalendar([]byte(data), now.Add(-24*time.Hour), now.Add(24*time.Hour))
+	if err != nil {
+		return nil, err
+	}
+	return parsed.Events, nil
+}
+
 func TestParseICalendar_BasicEvent(t *testing.T) {
 	icalData := `BEGIN:VCALENDAR
 PRODID:-//Test//Test Calendar//EN
@@ -22,9 +30,9 @@ END:VEVENT
 END:VCALENDAR`
 
 	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
-	events, err := parseICalendar([]byte(icalData), now)
+	events, err := parseEvents(icalData, now)
 	if err != nil {
-		t.Fatalf("parseICalendar: %v", err)
+		t.Fatalf("parseEvents: %v", err)
 	}
 
 	if len(events) != 1 {
@@ -58,9 +66,9 @@ END:VEVENT
 END:VCALENDAR`
 
 	now := time.Date(2026, 4, 6, 12, 0, 0, 0, time.UTC)
-	events, err := parseICalendar([]byte(icalData), now)
+	events, err := parseEvents(icalData, now)
 	if err != nil {
-		t.Fatalf("parseICalendar: %v", err)
+		t.Fatalf("parseEvents: %v", err)
 	}
 
 	if len(events) != 2 {
@@ -88,9 +96,9 @@ END:VEVENT
 END:VCALENDAR`
 
 	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
-	events, err := parseICalendar([]byte(icalData), now)
+	events, err := parseEvents(icalData, now)
 	if err != nil {
-		t.Fatalf("parseICalendar: %v", err)
+		t.Fatalf("parseEvents: %v", err)
 	}
 
 	if len(events) != 1 {
@@ -114,9 +122,9 @@ END:VEVENT
 END:VCALENDAR`
 
 	now := time.Date(2026, 4, 6, 12, 0, 0, 0, time.UTC)
-	events, err := parseICalendar([]byte(icalData), now)
+	events, err := parseEvents(icalData, now)
 	if err != nil {
-		t.Fatalf("parseICalendar: %v", err)
+		t.Fatalf("parseEvents: %v", err)
 	}
 
 	if len(events) != 1 {
@@ -259,9 +267,9 @@ END:VCALENDAR`
 
 	// Test a date well after the initial DTSTART to verify RRULE expansion.
 	now := time.Date(2026, 4, 15, 9, 30, 0, 0, time.UTC)
-	events, err := parseICalendar([]byte(icalData), now)
+	events, err := parseEvents(icalData, now)
 	if err != nil {
-		t.Fatalf("parseICalendar: %v", err)
+		t.Fatalf("parseEvents: %v", err)
 	}
 
 	found := false
@@ -304,9 +312,9 @@ END:VCALENDAR`
 	// now - 24h is 2026-04-06 12:00.
 	// The event started at 2026-04-06 09:00, which is BEFORE the window.
 
-	events, err := parseICalendar([]byte(icalData), now)
+	events, err := parseEvents(icalData, now)
 	if err != nil {
-		t.Fatalf("parseICalendar: %v", err)
+		t.Fatalf("parseEvents: %v", err)
 	}
 
 	found := false
@@ -339,9 +347,9 @@ END:VCALENDAR`
 	// 2026-04-07 is Tuesday, in the middle of the event.
 	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
 
-	events, err := parseICalendar([]byte(icalData), now)
+	events, err := parseEvents(icalData, now)
 	if err != nil {
-		t.Fatalf("parseICalendar: %v", err)
+		t.Fatalf("parseEvents: %v", err)
 	}
 
 	if len(events) != 1 {
@@ -405,9 +413,9 @@ END:VEVENT
 END:VCALENDAR`
 
 	now := time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC)
-	events, err := parseICalendar([]byte(icalData), now)
+	events, err := parseEvents(icalData, now)
 	if err != nil {
-		t.Fatalf("parseICalendar: %v", err)
+		t.Fatalf("parseEvents: %v", err)
 	}
 
 	if len(events) != 3 {
