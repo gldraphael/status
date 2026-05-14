@@ -4,12 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/gldraphael/status/internal/calendar"
-	"github.com/gldraphael/status/internal/config"
 	"github.com/gldraphael/status/internal/store"
+	"github.com/gldraphael/status/internal/timeutil"
 )
 
 var (
@@ -45,30 +44,22 @@ type ComputeOptions struct {
 	Now                        time.Time
 }
 
-// ParseBlocks converts configured blocks into runtime blocks.
-func ParseBlocks(blocks []config.AvailabilityBlockConfig) ([]Block, error) {
-	parsed := make([]Block, 0, len(blocks))
-	for i, block := range blocks {
-		start, err := parseClock(block.Start)
-		if err != nil {
-			return nil, fmt.Errorf("availability.blocks[%d].start: %w", i, err)
-		}
-		end, err := parseClock(block.End)
-		if err != nil {
-			return nil, fmt.Errorf("availability.blocks[%d].end: %w", i, err)
-		}
-		parsed = append(parsed, Block{
-			Name:  block.Name,
-			Start: start,
-			End:   end,
-		})
+// ParseBlock converts a named clock range into a runtime availability block.
+func ParseBlock(name, startValue, endValue string) (Block, error) {
+	start, err := timeutil.ParseClock(startValue)
+	if err != nil {
+		return Block{}, fmt.Errorf("start: %w", err)
 	}
-	return parsed, nil
+	end, err := timeutil.ParseClock(endValue)
+	if err != nil {
+		return Block{}, fmt.Errorf("end: %w", err)
+	}
+	return Block{Name: name, Start: start, End: end}, nil
 }
 
 // ParseWorkingHours converts the configured weekday working-hours window.
 func ParseWorkingHours(startValue, endValue string) (WorkingHours, error) {
-	start, end, err := parseClockRange(startValue, endValue)
+	start, end, err := timeutil.ParseClockRange(startValue, endValue)
 	if err != nil {
 		return WorkingHours{}, err
 	}
@@ -145,7 +136,7 @@ func Compute(body string, timezone string, blocks []Block, opts ComputeOptions) 
 		opts.Now = time.Now()
 	}
 
-	loc := loadLocation(timezone)
+	loc := timeutil.LoadLocation(timezone)
 	nowLocal := opts.Now.In(loc)
 	dayStart := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
 	windowEnd := dayStart.AddDate(0, 0, 10)
@@ -219,7 +210,7 @@ func firstFreeBlock(
 		if isToday && blockStart.Before(now) {
 			continue
 		}
-		if applyWorkingHours && overlaps(blockStart, blockEnd, workingStart, workingEnd) {
+		if applyWorkingHours && timeutil.Overlaps(blockStart, blockEnd, workingStart, workingEnd) {
 			continue
 		}
 		if !blockIsFree(events, blockStart, blockEnd, loc) {
@@ -242,40 +233,6 @@ func isExcludedHoliday(day time.Time, holidaySet map[string]struct{}, enabled bo
 	return ok
 }
 
-func parseClockRange(startValue, endValue string) (time.Duration, time.Duration, error) {
-	start, err := parseClock(strings.TrimSpace(startValue))
-	if err != nil {
-		return 0, 0, err
-	}
-	end, err := parseClock(strings.TrimSpace(endValue))
-	if err != nil {
-		return 0, 0, err
-	}
-	if end <= start {
-		return 0, 0, fmt.Errorf("end must be after start")
-	}
-	return start, end, nil
-}
-
-func parseClock(value string) (time.Duration, error) {
-	t, err := time.Parse("15:04", value)
-	if err != nil {
-		return 0, err
-	}
-	return time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute, nil
-}
-
-func loadLocation(name string) *time.Location {
-	if name == "" {
-		return time.UTC
-	}
-	loc, err := time.LoadLocation(name)
-	if err != nil {
-		return time.UTC
-	}
-	return loc
-}
-
 func blockIsFree(events []calendar.ParsedEvent, start, end time.Time, loc *time.Location) bool {
 	for _, event := range events {
 		if event.Cancelled || !event.Busy {
@@ -284,13 +241,9 @@ func blockIsFree(events []calendar.ParsedEvent, start, end time.Time, loc *time.
 
 		eventStart := event.StartTime.In(loc)
 		eventEnd := event.EndTime.In(loc)
-		if eventStart.Before(end) && eventEnd.After(start) {
+		if timeutil.Overlaps(eventStart, eventEnd, start, end) {
 			return false
 		}
 	}
 	return true
-}
-
-func overlaps(start, end, windowStart, windowEnd time.Time) bool {
-	return start.Before(windowEnd) && end.After(windowStart)
 }

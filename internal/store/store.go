@@ -9,7 +9,7 @@ import (
 	"github.com/cockroachdb/pebble"
 )
 
-// Status is the Slack status derived from active calendar events.
+// Status is the target status derived from active calendar events.
 type Status struct {
 	Emoji      string    `json:"emoji"`
 	Text       string    `json:"text"`

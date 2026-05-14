@@ -16,17 +16,21 @@ const englandBankHolidaysURL = "https://www.gov.uk/bank-holidays.json"
 
 // HolidayClient fetches the GOV.UK bank-holidays feed.
 type HolidayClient struct {
-	url string
+	feed *feed.Client
 }
 
 // NewHolidayClient creates a client for the fixed GOV.UK bank-holidays feed.
-func NewHolidayClient() *HolidayClient {
-	return &HolidayClient{url: englandBankHolidaysURL}
+func NewHolidayClient() (*HolidayClient, error) {
+	client, err := feed.NewClient(englandBankHolidaysURL, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	return &HolidayClient{feed: client}, nil
 }
 
 // Fetch returns the raw bank-holidays JSON body.
 func (c *HolidayClient) Fetch(ctx context.Context) ([]byte, error) {
-	body, err := feed.FetchBody(ctx, c.url, 30*time.Second)
+	body, err := c.feed.Fetch(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("fetch bank holidays: %w", err)
 	}

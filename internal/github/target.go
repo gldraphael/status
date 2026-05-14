@@ -97,8 +97,18 @@ type graphQLResponse struct {
 }
 
 type graphQLPayload struct {
-	Query     string         `json:"query"`
-	Variables map[string]any `json:"variables"`
+	Query     string           `json:"query"`
+	Variables graphQLVariables `json:"variables"`
+}
+
+type graphQLVariables struct {
+	Input changeUserStatusInput `json:"input"`
+}
+
+type changeUserStatusInput struct {
+	Message   string `json:"message"`
+	Emoji     string `json:"emoji"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
 }
 
 const changeUserStatusMutation = `mutation ChangeUserStatus($input: ChangeUserStatusInput!) { changeUserStatus(input: $input) { status { message emoji expiresAt } } }`
@@ -106,22 +116,17 @@ const changeUserStatusMutation = `mutation ChangeUserStatus($input: ChangeUserSt
 // buildGraphQLPayload constructs the GraphQL request payload. Nil status clears
 // the profile status by sending empty message and emoji values.
 func buildGraphQLPayload(st *target.Status) graphQLPayload {
-	input := map[string]string{
-		"message": "",
-		"emoji":   "",
-	}
+	input := changeUserStatusInput{}
 	if st != nil {
-		input["message"] = st.Text
-		input["emoji"] = st.Emoji
+		input.Message = st.Text
+		input.Emoji = st.Emoji
 		if !st.Expiration.IsZero() {
-			input["expiresAt"] = st.Expiration.UTC().Format(time.RFC3339)
+			input.ExpiresAt = st.Expiration.UTC().Format(time.RFC3339)
 		}
 	}
 	return graphQLPayload{
-		Query: changeUserStatusMutation,
-		Variables: map[string]any{
-			"input": input,
-		},
+		Query:     changeUserStatusMutation,
+		Variables: graphQLVariables{Input: input},
 	}
 }
 

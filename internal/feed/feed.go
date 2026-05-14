@@ -8,15 +8,31 @@ import (
 	"time"
 )
 
-// FetchBody fetches a feed body with the provided timeout.
-func FetchBody(ctx context.Context, url string, timeout time.Duration) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// Client fetches raw HTTP feed bodies.
+type Client struct {
+	url        string
+	httpClient *http.Client
+}
+
+// NewClient creates a feed client with the provided timeout.
+func NewClient(url string, timeout time.Duration) (*Client, error) {
+	if url == "" {
+		return nil, fmt.Errorf("feed URL is required")
+	}
+	return &Client{
+		url:        url,
+		httpClient: &http.Client{Timeout: timeout},
+	}, nil
+}
+
+// Fetch fetches the configured feed body.
+func (c *Client) Fetch(ctx context.Context) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetch feed: %w", err)
 	}

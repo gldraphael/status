@@ -10,7 +10,6 @@ import (
 
 	"github.com/rs/zerolog"
 
-	"github.com/gldraphael/status/internal/config"
 	"github.com/gldraphael/status/internal/store"
 )
 
@@ -26,13 +25,22 @@ func newTestStore(t *testing.T) *store.Store {
 
 func testBlocks(t *testing.T) []Block {
 	t.Helper()
-	blocks, err := ParseBlocks([]config.AvailabilityBlockConfig{
-		{Name: "Morning", Start: "09:00", End: "12:00"},
-		{Name: "Afternoon", Start: "12:00", End: "16:30"},
-		{Name: "Evening", Start: "17:30", End: "22:00"},
-	})
-	if err != nil {
-		t.Fatalf("ParseBlocks: %v", err)
+	specs := []struct {
+		name  string
+		start string
+		end   string
+	}{
+		{name: "Morning", start: "09:00", end: "12:00"},
+		{name: "Afternoon", start: "12:00", end: "16:30"},
+		{name: "Evening", start: "17:30", end: "22:00"},
+	}
+	blocks := make([]Block, 0, len(specs))
+	for _, spec := range specs {
+		block, err := ParseBlock(spec.name, spec.start, spec.end)
+		if err != nil {
+			t.Fatalf("ParseBlock(%q): %v", spec.name, err)
+		}
+		blocks = append(blocks, block)
 	}
 	return blocks
 }

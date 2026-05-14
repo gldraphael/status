@@ -15,6 +15,7 @@ import (
 	"github.com/gldraphael/status/internal/calendar"
 	"github.com/gldraphael/status/internal/config"
 	deploy "github.com/gldraphael/status/internal/deploy"
+	"github.com/gldraphael/status/internal/feed"
 	githubTarget "github.com/gldraphael/status/internal/github"
 	"github.com/gldraphael/status/internal/server"
 	"github.com/gldraphael/status/internal/store"
@@ -103,17 +104,21 @@ func registerAvailability(ctx context.Context, cfg config.AvailabilityConfig, st
 	if err != nil {
 		return nil, fmt.Errorf("parse availability working hours: %w", err)
 	}
-	availabilityBlocks, err := availability.ParseBlocks(cfg.Blocks)
+	availabilityBlocks, err := parseAvailabilityBlocks(cfg.Blocks)
 	if err != nil {
 		return nil, fmt.Errorf("parse availability blocks: %w", err)
 	}
-	availabilityClient, err := availability.NewClient(cfg.CalendarURL)
+	availabilityClient, err := feed.NewClient(cfg.CalendarURL, 30*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("create availability client: %w", err)
 	}
 
 	if cfg.ExcludeEnglandBankHolidays {
-		if err := availability.SyncHolidaySnapshot(ctx, st, availability.NewHolidayClient(), logger); err != nil {
+		holidayClient, err := availability.NewHolidayClient()
+		if err != nil {
+			return nil, fmt.Errorf("create bank holiday client: %w", err)
+		}
+		if err := availability.SyncHolidaySnapshot(ctx, st, holidayClient, logger); err != nil {
 			return nil, fmt.Errorf("seed bank holidays: %w", err)
 		}
 	}
@@ -121,6 +126,18 @@ func registerAvailability(ctx context.Context, cfg config.AvailabilityConfig, st
 	provider := availability.NewProvider(st, availabilityBlocks, workingHours, cfg.ExcludeEnglandBankHolidays)
 	mux.Handle("GET /api/availability", availability.NewHandler(provider, cfg.APIKey, logger))
 	return availability.NewSyncer(st, provider, availabilityClient, logger), nil
+}
+
+func parseAvailabilityBlocks(blocks []config.AvailabilityBlockConfig) ([]availability.Block, error) {
+	parsed := make([]availability.Block, 0, len(blocks))
+	for i, block := range blocks {
+		parsedBlock, err := availability.ParseBlock(block.Name, block.Start, block.End)
+		if err != nil {
+			return nil, fmt.Errorf("availability.blocks[%d]: %w", i, err)
+		}
+		parsed = append(parsed, parsedBlock)
+	}
+	return parsed, nil
 }
 
 func startDeployLoop(ctx context.Context, cfg config.BuildConfig, interval time.Duration, st *store.Store, logger zerolog.Logger) {

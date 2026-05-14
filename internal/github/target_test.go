@@ -24,15 +24,15 @@ func TestBuildGraphQLPayload_WithStatus(t *testing.T) {
 	if !strings.Contains(payload.Query, `changeUserStatus`) {
 		t.Errorf("mutation missing changeUserStatus")
 	}
-	input := payload.Variables["input"].(map[string]string)
-	if input["message"] != "Shipping a new feature" {
-		t.Errorf("message: got %q", input["message"])
+	input := payload.Variables.Input
+	if input.Message != "Shipping a new feature" {
+		t.Errorf("message: got %q", input.Message)
 	}
-	if input["emoji"] != ":rocket:" {
-		t.Errorf("emoji: got %q", input["emoji"])
+	if input.Emoji != ":rocket:" {
+		t.Errorf("emoji: got %q", input.Emoji)
 	}
-	if input["expiresAt"] != "2026-04-07T00:00:00Z" {
-		t.Errorf("expiresAt: got %q", input["expiresAt"])
+	if input.ExpiresAt != "2026-04-07T00:00:00Z" {
+		t.Errorf("expiresAt: got %q", input.ExpiresAt)
 	}
 }
 
@@ -43,25 +43,25 @@ func TestBuildGraphQLPayload_NoExpiry(t *testing.T) {
 	}
 
 	payload := buildGraphQLPayload(st)
-	input := payload.Variables["input"].(map[string]string)
+	input := payload.Variables.Input
 
-	if _, ok := input["expiresAt"]; ok {
+	if input.ExpiresAt != "" {
 		t.Errorf("input should not have expiresAt: %+v", input)
 	}
-	if input["message"] != "In a meeting" {
-		t.Errorf("message: got %q", input["message"])
+	if input.Message != "In a meeting" {
+		t.Errorf("message: got %q", input.Message)
 	}
 }
 
 func TestBuildGraphQLPayload_ClearsStatus(t *testing.T) {
 	payload := buildGraphQLPayload(nil)
-	input := payload.Variables["input"].(map[string]string)
+	input := payload.Variables.Input
 
-	if input["message"] != "" {
-		t.Errorf("message: got %q, want empty", input["message"])
+	if input.Message != "" {
+		t.Errorf("message: got %q, want empty", input.Message)
 	}
-	if input["emoji"] != "" {
-		t.Errorf("emoji: got %q, want empty", input["emoji"])
+	if input.Emoji != "" {
+		t.Errorf("emoji: got %q, want empty", input.Emoji)
 	}
 }
 
@@ -78,12 +78,12 @@ func TestGraphQLPayload_IsValidJSON(t *testing.T) {
 		t.Fatalf("marshal to json: %v", err)
 	}
 
-	var decoded map[string]any
+	var decoded graphQLPayload
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("unmarshal from json: %v", err)
 	}
 
-	if _, ok := decoded["query"]; !ok {
+	if decoded.Query == "" {
 		t.Errorf("decoded json missing query field")
 	}
 }

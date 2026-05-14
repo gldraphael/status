@@ -23,6 +23,7 @@ type Syncer struct {
 	provider *Provider
 	cal      feedClient
 	logger   zerolog.Logger
+	nowFunc  func() time.Time
 }
 
 // NewSyncer creates a new Syncer.
@@ -32,6 +33,7 @@ func NewSyncer(st *store.Store, provider *Provider, cal feedClient, logger zerol
 		provider: provider,
 		cal:      cal,
 		logger:   logger,
+		nowFunc:  time.Now,
 	}
 }
 
@@ -61,7 +63,7 @@ func (s *Syncer) syncOnce(ctx context.Context) error {
 		snap := &store.AvailabilitySnapshot{
 			Body:      string(body),
 			Timezone:  timezone,
-			FetchedAt: time.Now().UTC(),
+			FetchedAt: s.nowFunc().UTC(),
 		}
 		if err := s.store.SetAvailabilitySnapshot(snap); err != nil {
 			return fmt.Errorf("store availability snapshot: %w", err)

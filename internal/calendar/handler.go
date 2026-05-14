@@ -24,6 +24,7 @@ type Syncer struct {
 	cal     calendarClient
 	targets []target.Target
 	logger  zerolog.Logger
+	nowFunc func() time.Time
 }
 
 // NewSyncer creates a new Syncer.
@@ -33,6 +34,7 @@ func NewSyncer(st *store.Store, cal calendarClient, targets []target.Target, log
 		cal:     cal,
 		targets: targets,
 		logger:  logger,
+		nowFunc: time.Now,
 	}
 }
 
@@ -76,7 +78,7 @@ func (s *Syncer) syncOnce(ctx context.Context) error {
 
 // syncStatus computes and syncs the current status to all targets.
 func (s *Syncer) syncStatus(ctx context.Context) error {
-	now := time.Now()
+	now := s.nowFunc()
 	active, err := s.store.ListActiveEvents(now)
 	if err != nil {
 		return fmt.Errorf("list active events: %w", err)

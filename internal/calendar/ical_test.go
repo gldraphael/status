@@ -17,6 +17,19 @@ func parseEvents(data string, now time.Time) ([]ParsedEvent, error) {
 	return parsed.Events, nil
 }
 
+func fetchEvents(t *testing.T, calendarURL string, now time.Time) ([]ChangedEvent, error) {
+	t.Helper()
+	client, err := NewClient(calendarURL)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	client.nowFunc = func() time.Time { return now }
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return client.FetchEvents(ctx)
+}
+
 func TestParseICalendar_BasicEvent(t *testing.T) {
 	icalData := `BEGIN:VCALENDAR
 PRODID:-//Test//Test Calendar//EN
@@ -136,8 +149,8 @@ END:VCALENDAR`
 	}
 }
 
-func TestFetchAndParseICalendar_WithHTTPServer(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Minute)
+func TestClientFetchEvents_WithHTTPServer(t *testing.T) {
+	now := time.Date(2026, 4, 6, 12, 0, 0, 0, time.UTC)
 	start := now.Add(-time.Hour).Format("20060102T150405Z")
 	end := now.Add(time.Hour).Format("20060102T150405Z")
 	icalData := "BEGIN:VCALENDAR\n" +
@@ -162,12 +175,9 @@ func TestFetchAndParseICalendar_WithHTTPServer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	events, err := FetchAndParseICalendar(ctx, server.URL)
+	events, err := fetchEvents(t, server.URL, now)
 	if err != nil {
-		t.Fatalf("FetchAndParseICalendar: %v", err)
+		t.Fatalf("FetchEvents: %v", err)
 	}
 
 	if len(events) != 1 {
@@ -179,16 +189,13 @@ func TestFetchAndParseICalendar_WithHTTPServer(t *testing.T) {
 	}
 }
 
-func TestFetchAndParseICalendar_404Error(t *testing.T) {
+func TestClientFetchEvents_404Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err := FetchAndParseICalendar(ctx, server.URL)
+	_, err := fetchEvents(t, server.URL, time.Date(2026, 4, 6, 12, 0, 0, 0, time.UTC))
 	if err == nil {
 		t.Error("expected error for 404 response")
 	}
@@ -197,9 +204,8 @@ func TestFetchAndParseICalendar_404Error(t *testing.T) {
 	}
 }
 
-func TestFetchAndParseICalendar_GoogleCalendarFormat(t *testing.T) {
-	// This is the exact format from Google Calendar's iCal export
-	now := time.Now().UTC().Truncate(time.Minute)
+func TestClientFetchEvents_GoogleCalendarFormat(t *testing.T) {
+	now := time.Date(2026, 4, 6, 12, 0, 0, 0, time.UTC)
 	start := now.Add(-time.Hour).Format("20060102T150405Z")
 	end := now.Add(time.Hour).Format("20060102T150405Z")
 	icalData := "BEGIN:VCALENDAR\n" +
@@ -228,12 +234,9 @@ func TestFetchAndParseICalendar_GoogleCalendarFormat(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	events, err := FetchAndParseICalendar(ctx, server.URL)
+	events, err := fetchEvents(t, server.URL, now)
 	if err != nil {
-		t.Fatalf("FetchAndParseICalendar: %v", err)
+		t.Fatalf("FetchEvents: %v", err)
 	}
 
 	if len(events) != 1 {

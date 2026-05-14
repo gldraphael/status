@@ -1,7 +1,6 @@
 package calendar
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -9,7 +8,7 @@ import (
 	ics "github.com/arran4/golang-ical"
 	"github.com/teambition/rrule-go"
 
-	"github.com/gldraphael/status/internal/feed"
+	"github.com/gldraphael/status/internal/timeutil"
 )
 
 // ParsedEvent is an event extracted from an iCal file.
@@ -26,30 +25,6 @@ type ParsedEvent struct {
 type ParsedCalendar struct {
 	Timezone string
 	Events   []ParsedEvent
-}
-
-// FetchICalendarBody fetches the raw iCal body from the given URL.
-func FetchICalendarBody(ctx context.Context, calendarURL string) ([]byte, error) {
-	body, err := feed.FetchBody(ctx, calendarURL, 30*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("fetch calendar: %w", err)
-	}
-	return body, nil
-}
-
-// FetchAndParseICalendar fetches and parses an iCal file from the given URL.
-func FetchAndParseICalendar(ctx context.Context, calendarURL string) ([]ParsedEvent, error) {
-	body, err := FetchICalendarBody(ctx, calendarURL)
-	if err != nil {
-		return nil, err
-	}
-
-	now := time.Now()
-	parsed, err := ParseICalendar(body, now.Add(-24*time.Hour), now.Add(24*time.Hour))
-	if err != nil {
-		return nil, err
-	}
-	return parsed.Events, nil
 }
 
 // ParseICalendar parses an iCal stream and expands recurring events within the
@@ -135,7 +110,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 
 	for _, base := range baseEvents {
 		if base.rrule == "" {
-			if overlaps(base.startTime, base.endTime, windowStart, windowEnd) {
+			if timeutil.Overlaps(base.startTime, base.endTime, windowStart, windowEnd) {
 				parsed.Events = append(parsed.Events, ParsedEvent{
 					ID:        base.id,
 					Summary:   base.summary,
@@ -157,7 +132,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 				duration := base.endTime.Sub(base.startTime)
 				for _, inst := range instances {
 					endAt := inst.Add(duration)
-					if !overlaps(inst, endAt, windowStart, windowEnd) {
+					if !timeutil.Overlaps(inst, endAt, windowStart, windowEnd) {
 						continue
 					}
 					parsed.Events = append(parsed.Events, ParsedEvent{
@@ -173,7 +148,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 			}
 		}
 
-		if overlaps(base.startTime, base.endTime, windowStart, windowEnd) {
+		if timeutil.Overlaps(base.startTime, base.endTime, windowStart, windowEnd) {
 			parsed.Events = append(parsed.Events, ParsedEvent{
 				ID:        base.id,
 				Summary:   base.summary,
@@ -207,8 +182,4 @@ func calendarTimezone(cal *ics.Calendar) string {
 		}
 	}
 	return "UTC"
-}
-
-func overlaps(start, end, windowStart, windowEnd time.Time) bool {
-	return start.Before(windowEnd) && end.After(windowStart)
 }

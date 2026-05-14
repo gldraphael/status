@@ -10,6 +10,8 @@ import (
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
+
+	"github.com/gldraphael/status/internal/timeutil"
 )
 
 // Config holds application configuration.
@@ -150,7 +152,7 @@ func (a AvailabilityConfig) Validate() error {
 	if a.APIKey == "" {
 		return fmt.Errorf("availability.api_key is required when availability is enabled")
 	}
-	if _, _, err := parseClockRange(a.WorkingHours.Start, a.WorkingHours.End); err != nil {
+	if _, _, err := timeutil.ParseClockRange(a.WorkingHours.Start, a.WorkingHours.End); err != nil {
 		return fmt.Errorf("availability.working_hours: %w", err)
 	}
 	if len(a.Blocks) == 0 {
@@ -166,26 +168,11 @@ func (a AvailabilityConfig) Validate() error {
 		if block.End == "" {
 			return fmt.Errorf("availability.blocks[%d].end is required", i)
 		}
-		if _, _, err := parseClockRange(block.Start, block.End); err != nil {
+		if _, _, err := timeutil.ParseClockRange(block.Start, block.End); err != nil {
 			return fmt.Errorf("availability.blocks[%d]: %w", i, err)
 		}
 	}
 	return nil
-}
-
-func parseClockRange(startValue, endValue string) (time.Time, time.Time, error) {
-	start, err := time.Parse("15:04", strings.TrimSpace(startValue))
-	if err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	end, err := time.Parse("15:04", strings.TrimSpace(endValue))
-	if err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	if !end.After(start) {
-		return time.Time{}, time.Time{}, fmt.Errorf("end must be after start")
-	}
-	return start, end, nil
 }
 
 // Validate checks the configured build settings.
