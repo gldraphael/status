@@ -35,17 +35,18 @@ func NewTarget(token string) *Target {
 
 // Sync implements target.Target. A nil status clears the GitHub user profile status.
 func (t *Target) Sync(ctx context.Context, st *target.Status) error {
+	status := st
 	if st != nil {
 		emoji, text := extractFirstEmoji(st.Text)
 		if emoji != "" {
-			st.Emoji = emoji
-			st.Text = text
+			statusCopy := *st
+			statusCopy.Emoji = emoji
+			statusCopy.Text = text
+			status = &statusCopy
 		}
 	}
 
-	mutation := buildGraphQLMutation(st)
-	payload := map[string]string{"query": mutation}
-
+	payload := buildGraphQLPayload(status)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal graphql: %w", err)
@@ -93,40 +94,40 @@ type graphQLResponse struct {
 	Errors []struct {
 		Message string `json:"message"`
 	} `json:"errors"`
-	Data interface{} `json:"data"`
 }
 
-// buildGraphQLMutation constructs the GraphQL mutation for changing user status.
-// When st is nil, it clears the status by setting empty strings.
-func buildGraphQLMutation(st *target.Status) string {
-	if st == nil {
-		// Clear status by setting message and emoji to empty strings (GitHub treats empty as clear)
-		return `mutation { changeUserStatus(input: { message: "", emoji: "" }) { status { message emoji expiresAt } } }`
-	}
-
-	message := escapeGraphQLString(st.Text)
-	emoji := escapeGraphQLString(st.Emoji)
-
-	// Build the mutation with expiration if present
-	var expiresAtArg string
-	if !st.Expiration.IsZero() {
-		expiresAt := escapeGraphQLString(st.Expiration.UTC().Format(time.RFC3339))
-		expiresAtArg = fmt.Sprintf(`, expiresAt: %s`, expiresAt)
-	}
-
-	return fmt.Sprintf(
-		`mutation { changeUserStatus(input: { message: %s, emoji: %s%s }) { status { message emoji expiresAt } } }`,
-		message, emoji, expiresAtArg,
-	)
+type graphQLPayload struct {
+	Query     string           `json:"query"`
+	Variables graphQLVariables `json:"variables"`
 }
 
-// escapeGraphQLString escapes a string for use in a GraphQL query.
-// It handles backslashes and quotes.
-func escapeGraphQLString(s string) string {
-	// First escape backslashes, then escape quotes
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `"`, `\"`)
-	return fmt.Sprintf(`"%s"`, s)
+type graphQLVariables struct {
+	Input changeUserStatusInput `json:"input"`
+}
+
+type changeUserStatusInput struct {
+	Message   string `json:"message"`
+	Emoji     string `json:"emoji"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+}
+
+const changeUserStatusMutation = `mutation ChangeUserStatus($input: ChangeUserStatusInput!) { changeUserStatus(input: $input) { status { message emoji expiresAt } } }`
+
+// buildGraphQLPayload constructs the GraphQL request payload. Nil status clears
+// the profile status by sending empty message and emoji values.
+func buildGraphQLPayload(st *target.Status) graphQLPayload {
+	input := changeUserStatusInput{}
+	if st != nil {
+		input.Message = st.Text
+		input.Emoji = st.Emoji
+		if !st.Expiration.IsZero() {
+			input.ExpiresAt = st.Expiration.UTC().Format(time.RFC3339)
+		}
+	}
+	return graphQLPayload{
+		Query:     changeUserStatusMutation,
+		Variables: graphQLVariables{Input: input},
+	}
 }
 
 // extractFirstEmoji returns the first emoji found in the string and the remaining text.

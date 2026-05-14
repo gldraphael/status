@@ -4,11 +4,14 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/gldraphael/status/internal/feed"
 )
 
 // Client fetches calendar events from an iCal URL.
 type Client struct {
-	calendarURL string
+	feed    *feed.Client
+	nowFunc func() time.Time
 }
 
 // NewClient creates a Client for the given iCal URL.
@@ -16,7 +19,11 @@ func NewClient(calendarURL string) (*Client, error) {
 	if calendarURL == "" {
 		return nil, fmt.Errorf("calendar URL is required")
 	}
-	return &Client{calendarURL: calendarURL}, nil
+	feedClient, err := feed.NewClient(calendarURL, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{feed: feedClient, nowFunc: time.Now}, nil
 }
 
 // ChangedEvent is a calendar event returned from FetchEvents.
@@ -29,15 +36,20 @@ type ChangedEvent struct {
 }
 
 // FetchEvents fetches all events from the iCal URL.
-// The syncToken parameter is ignored (kept for compatibility).
 func (c *Client) FetchEvents(ctx context.Context) ([]ChangedEvent, error) {
-	parsed, err := FetchAndParseICalendar(ctx, c.calendarURL)
+	body, err := c.feed.Fetch(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("fetch calendar: %w", err)
+	}
+
+	now := c.nowFunc()
+	parsed, err := ParseICalendar(body, now.Add(-24*time.Hour), now.Add(24*time.Hour))
 	if err != nil {
 		return nil, fmt.Errorf("fetch events: %w", err)
 	}
 
-	events := make([]ChangedEvent, len(parsed))
-	for i, p := range parsed {
+	events := make([]ChangedEvent, len(parsed.Events))
+	for i, p := range parsed.Events {
 		events[i] = ChangedEvent{
 			ID:        p.ID,
 			Summary:   p.Summary,

@@ -46,8 +46,6 @@ This repository is a Go service that syncs calendar status and exposes availabil
 - Pebble key design includes:
   - `status` for the current status record
   - `event:{eventID}` for stored calendar events
-  - `channel:{channelID}` for push notification channels
-  - `sync:{calendarID}` for incremental sync tokens
   - `availability` for the latest raw availability snapshot
   - `availability_dirty` for tracking if availability changed since last deploy (stores pending JSON)
   - `availability_last_deployed` for tracking the availability entries JSON from the last successful deploy

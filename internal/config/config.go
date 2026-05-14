@@ -10,6 +10,8 @@ import (
 	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
+
+	"github.com/gldraphael/status/internal/timeutil"
 )
 
 // Config holds application configuration.
@@ -58,8 +60,6 @@ type AvailabilityBlockConfig struct {
 	End   string `koanf:"end"`   // HH:MM, 24-hour clock
 }
 
-// envMapping maps environment variable names to koanf config keys.
-// Only variables listed here are loaded; all others are ignored.
 // BuildConfig configures automatic builds/deploys.
 type BuildConfig struct {
 	IsEnabled    bool   `koanf:"is_enabled"`
@@ -74,7 +74,6 @@ var envMapping = map[string]string{
 	"PEBBLE_PATH":                                "pebble_path",
 	"CALENDAR_URL":                               "calendar_url",
 	"GITHUB_TOKEN":                               "targets.github.token",
-	"GITHUB_USERNAME":                            "targets.github.username",
 	"AVAILABILITY_IS_ENABLED":                    "availability.is_enabled",
 	"AVAILABILITY_CALENDAR_URL":                  "availability.calendar_url",
 	"AVAILABILITY_API_KEY":                       "availability.api_key",
@@ -153,7 +152,7 @@ func (a AvailabilityConfig) Validate() error {
 	if a.APIKey == "" {
 		return fmt.Errorf("availability.api_key is required when availability is enabled")
 	}
-	if _, _, err := parseClockRange(a.WorkingHours.Start, a.WorkingHours.End); err != nil {
+	if _, _, err := timeutil.ParseClockRange(a.WorkingHours.Start, a.WorkingHours.End); err != nil {
 		return fmt.Errorf("availability.working_hours: %w", err)
 	}
 	if len(a.Blocks) == 0 {
@@ -169,26 +168,11 @@ func (a AvailabilityConfig) Validate() error {
 		if block.End == "" {
 			return fmt.Errorf("availability.blocks[%d].end is required", i)
 		}
-		if _, _, err := parseClockRange(block.Start, block.End); err != nil {
+		if _, _, err := timeutil.ParseClockRange(block.Start, block.End); err != nil {
 			return fmt.Errorf("availability.blocks[%d]: %w", i, err)
 		}
 	}
 	return nil
-}
-
-func parseClockRange(startValue, endValue string) (time.Time, time.Time, error) {
-	start, err := time.Parse("15:04", strings.TrimSpace(startValue))
-	if err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	end, err := time.Parse("15:04", strings.TrimSpace(endValue))
-	if err != nil {
-		return time.Time{}, time.Time{}, err
-	}
-	if !end.After(start) {
-		return time.Time{}, time.Time{}, fmt.Errorf("end must be after start")
-	}
-	return start, end, nil
 }
 
 // Validate checks the configured build settings.
@@ -196,18 +180,27 @@ func (b BuildConfig) Validate() error {
 	if !b.IsEnabled {
 		return nil
 	}
+	_, err := b.IntervalDuration()
+	return err
+}
+
+// IntervalDuration returns the validated build interval.
+func (b BuildConfig) IntervalDuration() (time.Duration, error) {
+	if !b.IsEnabled {
+		return 0, nil
+	}
 	if strings.TrimSpace(b.Interval) == "" {
-		return fmt.Errorf("build.interval is required when build is enabled")
+		return 0, fmt.Errorf("build.interval is required when build is enabled")
 	}
 	dur, err := time.ParseDuration(b.Interval)
 	if err != nil {
-		return fmt.Errorf("build.interval: %w", err)
+		return 0, fmt.Errorf("build.interval: %w", err)
 	}
 	if dur < time.Minute {
-		return fmt.Errorf("build.interval must be at least 1m")
+		return 0, fmt.Errorf("build.interval must be at least 1m")
 	}
 	if strings.TrimSpace(b.CfDeployHook) == "" {
-		return fmt.Errorf("build.cf_deploy_hook is required when build is enabled")
+		return 0, fmt.Errorf("build.cf_deploy_hook is required when build is enabled")
 	}
-	return nil
+	return dur, nil
 }

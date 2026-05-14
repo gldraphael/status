@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/gldraphael/status/internal/calendar"
+	"github.com/gldraphael/status/internal/poll"
 	"github.com/gldraphael/status/internal/store"
 )
 
@@ -22,6 +23,7 @@ type Syncer struct {
 	provider *Provider
 	cal      feedClient
 	logger   zerolog.Logger
+	nowFunc  func() time.Time
 }
 
 // NewSyncer creates a new Syncer.
@@ -31,28 +33,21 @@ func NewSyncer(st *store.Store, provider *Provider, cal feedClient, logger zerol
 		provider: provider,
 		cal:      cal,
 		logger:   logger,
+		nowFunc:  time.Now,
 	}
 }
 
 // Run starts the sync loop and blocks until ctx is cancelled.
 func (s *Syncer) Run(ctx context.Context, interval time.Duration) error {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	if err := s.syncOnce(ctx); err != nil {
-		s.logger.Error().Err(err).Msg("sync availability on startup")
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			if err := s.syncOnce(ctx); err != nil {
-				s.logger.Error().Err(err).Msg("sync availability cycle")
-			}
+	return poll.Every(ctx, interval, func() error {
+		return s.syncOnce(ctx)
+	}, func(err error, startup bool) {
+		msg := "sync availability cycle"
+		if startup {
+			msg = "sync availability on startup"
 		}
-	}
+		s.logger.Error().Err(err).Msg(msg)
+	})
 }
 
 func (s *Syncer) syncOnce(ctx context.Context) error {
@@ -68,7 +63,7 @@ func (s *Syncer) syncOnce(ctx context.Context) error {
 		snap := &store.AvailabilitySnapshot{
 			Body:      string(body),
 			Timezone:  timezone,
-			FetchedAt: time.Now().UTC(),
+			FetchedAt: s.nowFunc().UTC(),
 		}
 		if err := s.store.SetAvailabilitySnapshot(snap); err != nil {
 			return fmt.Errorf("store availability snapshot: %w", err)
@@ -76,7 +71,7 @@ func (s *Syncer) syncOnce(ctx context.Context) error {
 	}
 
 	// Change detection: compare current entries with last deployed ones.
-	currentEntries, err := s.provider.GetEntriesJSON(ctx)
+	currentEntries, err := s.provider.GetEntriesJSON()
 	if err != nil {
 		return fmt.Errorf("compute current availability: %w", err)
 	}

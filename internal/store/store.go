@@ -9,7 +9,7 @@ import (
 	"github.com/cockroachdb/pebble"
 )
 
-// Status is the Slack status derived from active calendar events.
+// Status is the target status derived from active calendar events.
 type Status struct {
 	Emoji      string    `json:"emoji"`
 	Text       string    `json:"text"`
@@ -39,15 +39,6 @@ type HolidaySnapshot struct {
 	FetchedAt time.Time `json:"fetched_at"`
 }
 
-// Channel represents a registered Google Calendar push notification channel.
-type Channel struct {
-	ID         string    `json:"id"`
-	ResourceID string    `json:"resource_id"`
-	CalendarID string    `json:"calendar_id"`
-	UserID     string    `json:"user_id"`
-	Expiry     time.Time `json:"expiry"`
-}
-
 // Store wraps a Pebble database.
 type Store struct {
 	db *pebble.DB
@@ -67,191 +58,143 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// GetStatus returns the current status (O(1) lookup).
-func (s *Store) GetStatus() (*Status, bool, error) {
-	data, closer, err := s.db.Get(statusKey())
+func (s *Store) getBytes(key []byte, label string) ([]byte, bool, error) {
+	data, closer, err := s.db.Get(key)
 	if errors.Is(err, pebble.ErrNotFound) {
 		return nil, false, nil
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("get status: %w", err)
+		return nil, false, fmt.Errorf("get %s: %w", label, err)
 	}
 	defer closer.Close()
 
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	return buf, true, nil
+}
+
+func (s *Store) setBytes(key, data []byte, label string) error {
+	if err := s.db.Set(key, data, pebble.Sync); err != nil {
+		return fmt.Errorf("set %s: %w", label, err)
+	}
+	return nil
+}
+
+func (s *Store) deleteKey(key []byte, label string) error {
+	err := s.db.Delete(key, pebble.Sync)
+	if err != nil && !errors.Is(err, pebble.ErrNotFound) {
+		return fmt.Errorf("delete %s: %w", label, err)
+	}
+	return nil
+}
+
+func (s *Store) getJSON(key []byte, value any, label string) (bool, error) {
+	data, ok, err := s.getBytes(key, label)
+	if err != nil || !ok {
+		return ok, err
+	}
+	if err := json.Unmarshal(data, value); err != nil {
+		return false, fmt.Errorf("unmarshal %s: %w", label, err)
+	}
+	return true, nil
+}
+
+func (s *Store) setJSON(key []byte, value any, label string) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", label, err)
+	}
+	return s.setBytes(key, data, label)
+}
+
+// GetStatus returns the current status (O(1) lookup).
+func (s *Store) GetStatus() (*Status, bool, error) {
 	var st Status
-	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, false, fmt.Errorf("unmarshal status: %w", err)
+	ok, err := s.getJSON(statusKey(), &st, "status")
+	if err != nil || !ok {
+		return nil, ok, err
 	}
 	return &st, true, nil
 }
 
 // SetStatus persists the current status.
 func (s *Store) SetStatus(st *Status) error {
-	data, err := json.Marshal(st)
-	if err != nil {
-		return fmt.Errorf("marshal status: %w", err)
-	}
-	if err := s.db.Set(statusKey(), data, pebble.Sync); err != nil {
-		return fmt.Errorf("set status: %w", err)
-	}
-	return nil
+	return s.setJSON(statusKey(), st, "status")
 }
 
 // DeleteStatus removes the stored status.
 func (s *Store) DeleteStatus() error {
-	err := s.db.Delete(statusKey(), pebble.Sync)
-	if err != nil && !errors.Is(err, pebble.ErrNotFound) {
-		return fmt.Errorf("delete status: %w", err)
-	}
-	return nil
+	return s.deleteKey(statusKey(), "status")
 }
 
 // GetAvailabilitySnapshot returns the stored availability calendar snapshot.
 func (s *Store) GetAvailabilitySnapshot() (*AvailabilitySnapshot, bool, error) {
-	data, closer, err := s.db.Get(availabilityKey())
-	if errors.Is(err, pebble.ErrNotFound) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("get availability snapshot: %w", err)
-	}
-	defer closer.Close()
-
 	var snap AvailabilitySnapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return nil, false, fmt.Errorf("unmarshal availability snapshot: %w", err)
+	ok, err := s.getJSON(availabilityKey(), &snap, "availability snapshot")
+	if err != nil || !ok {
+		return nil, ok, err
 	}
 	return &snap, true, nil
 }
 
 // SetAvailabilitySnapshot persists the latest availability calendar snapshot.
 func (s *Store) SetAvailabilitySnapshot(snap *AvailabilitySnapshot) error {
-	data, err := json.Marshal(snap)
-	if err != nil {
-		return fmt.Errorf("marshal availability snapshot: %w", err)
-	}
-	if err := s.db.Set(availabilityKey(), data, pebble.Sync); err != nil {
-		return fmt.Errorf("set availability snapshot: %w", err)
-	}
-	return nil
+	return s.setJSON(availabilityKey(), snap, "availability snapshot")
 }
 
 // GetAvailabilityDirty returns the pending availability entries JSON if the calendar has changed since the last deployment.
 func (s *Store) GetAvailabilityDirty() ([]byte, bool, error) {
-	data, closer, err := s.db.Get(availabilityDirtyKey())
-	if errors.Is(err, pebble.ErrNotFound) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("get availability dirty: %w", err)
-	}
-	defer closer.Close()
-
-	buf := make([]byte, len(data))
-	copy(buf, data)
-	return buf, true, nil
+	return s.getBytes(availabilityDirtyKey(), "availability dirty")
 }
 
 // SetAvailabilityDirty persists the pending availability entries JSON.
 func (s *Store) SetAvailabilityDirty(data []byte) error {
-	if err := s.db.Set(availabilityDirtyKey(), data, pebble.Sync); err != nil {
-		return fmt.Errorf("set availability dirty: %w", err)
-	}
-	return nil
+	return s.setBytes(availabilityDirtyKey(), data, "availability dirty")
 }
 
 // ClearAvailabilityDirty removes the availability dirty flag.
 func (s *Store) ClearAvailabilityDirty() error {
-	err := s.db.Delete(availabilityDirtyKey(), pebble.Sync)
-	if err != nil && !errors.Is(err, pebble.ErrNotFound) {
-		return fmt.Errorf("delete availability dirty: %w", err)
-	}
-	return nil
+	return s.deleteKey(availabilityDirtyKey(), "availability dirty")
 }
 
 // GetLastDeployedAvailability returns the availability entries JSON from the last successful deployment.
 func (s *Store) GetLastDeployedAvailability() ([]byte, bool, error) {
-	data, closer, err := s.db.Get(availabilityLastDeployedKey())
-	if errors.Is(err, pebble.ErrNotFound) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("get availability last deployed: %w", err)
-	}
-	defer closer.Close()
-
-	// Return a copy since the closer will invalidate the slice.
-	buf := make([]byte, len(data))
-	copy(buf, data)
-	return buf, true, nil
+	return s.getBytes(availabilityLastDeployedKey(), "availability last deployed")
 }
 
 // SetLastDeployedAvailability persists the availability entries JSON from a successful deployment.
 func (s *Store) SetLastDeployedAvailability(data []byte) error {
-	if err := s.db.Set(availabilityLastDeployedKey(), data, pebble.Sync); err != nil {
-		return fmt.Errorf("set availability last deployed: %w", err)
-	}
-	return nil
+	return s.setBytes(availabilityLastDeployedKey(), data, "availability last deployed")
 }
 
 // GetHolidaySnapshot returns the stored bank holiday snapshot.
 func (s *Store) GetHolidaySnapshot() (*HolidaySnapshot, bool, error) {
-	data, closer, err := s.db.Get(availabilityHolidaysKey())
-	if errors.Is(err, pebble.ErrNotFound) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("get holiday snapshot: %w", err)
-	}
-	defer closer.Close()
-
 	var snap HolidaySnapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return nil, false, fmt.Errorf("unmarshal holiday snapshot: %w", err)
+	ok, err := s.getJSON(availabilityHolidaysKey(), &snap, "holiday snapshot")
+	if err != nil || !ok {
+		return nil, ok, err
 	}
 	return &snap, true, nil
 }
 
 // SetHolidaySnapshot persists the latest bank holiday snapshot.
 func (s *Store) SetHolidaySnapshot(snap *HolidaySnapshot) error {
-	data, err := json.Marshal(snap)
-	if err != nil {
-		return fmt.Errorf("marshal holiday snapshot: %w", err)
-	}
-	if err := s.db.Set(availabilityHolidaysKey(), data, pebble.Sync); err != nil {
-		return fmt.Errorf("set holiday snapshot: %w", err)
-	}
-	return nil
+	return s.setJSON(availabilityHolidaysKey(), snap, "holiday snapshot")
 }
 
 // GetEvent retrieves a stored calendar event.
 func (s *Store) GetEvent(eventID string) (*Event, bool, error) {
-	data, closer, err := s.db.Get(eventKey(eventID))
-	if errors.Is(err, pebble.ErrNotFound) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("get event: %w", err)
-	}
-	defer closer.Close()
-
 	var ev Event
-	if err := json.Unmarshal(data, &ev); err != nil {
-		return nil, false, fmt.Errorf("unmarshal event: %w", err)
+	ok, err := s.getJSON(eventKey(eventID), &ev, "event")
+	if err != nil || !ok {
+		return nil, ok, err
 	}
 	return &ev, true, nil
 }
 
 // SetEvent persists a calendar event.
 func (s *Store) SetEvent(ev *Event) error {
-	data, err := json.Marshal(ev)
-	if err != nil {
-		return fmt.Errorf("marshal event: %w", err)
-	}
-	if err := s.db.Set(eventKey(ev.ID), data, pebble.Sync); err != nil {
-		return fmt.Errorf("set event: %w", err)
-	}
-	return nil
+	return s.setJSON(eventKey(ev.ID), ev, "event")
 }
 
 // ListActiveEvents returns events that overlap with now
@@ -281,55 +224,4 @@ func (s *Store) ListActiveEvents(now time.Time) ([]*Event, error) {
 		return nil, fmt.Errorf("iter events: %w", err)
 	}
 	return active, nil
-}
-
-// GetChannel retrieves a registered push notification channel.
-func (s *Store) GetChannel(channelID string) (*Channel, bool, error) {
-	data, closer, err := s.db.Get(channelKey(channelID))
-	if errors.Is(err, pebble.ErrNotFound) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("get channel: %w", err)
-	}
-	defer closer.Close()
-
-	var ch Channel
-	if err := json.Unmarshal(data, &ch); err != nil {
-		return nil, false, fmt.Errorf("unmarshal channel: %w", err)
-	}
-	return &ch, true, nil
-}
-
-// SetChannel persists a push notification channel registration.
-func (s *Store) SetChannel(ch *Channel) error {
-	data, err := json.Marshal(ch)
-	if err != nil {
-		return fmt.Errorf("marshal channel: %w", err)
-	}
-	if err := s.db.Set(channelKey(ch.ID), data, pebble.Sync); err != nil {
-		return fmt.Errorf("set channel: %w", err)
-	}
-	return nil
-}
-
-// GetSyncToken returns the stored incremental sync token for a calendar.
-func (s *Store) GetSyncToken(calendarID string) (string, bool, error) {
-	data, closer, err := s.db.Get(syncTokenKey(calendarID))
-	if errors.Is(err, pebble.ErrNotFound) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("get sync token: %w", err)
-	}
-	defer closer.Close()
-	return string(data), true, nil
-}
-
-// SetSyncToken persists the incremental sync token for a calendar.
-func (s *Store) SetSyncToken(calendarID, token string) error {
-	if err := s.db.Set(syncTokenKey(calendarID), []byte(token), pebble.Sync); err != nil {
-		return fmt.Errorf("set sync token: %w", err)
-	}
-	return nil
 }

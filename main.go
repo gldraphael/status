@@ -15,6 +15,7 @@ import (
 	"github.com/gldraphael/status/internal/calendar"
 	"github.com/gldraphael/status/internal/config"
 	deploy "github.com/gldraphael/status/internal/deploy"
+	"github.com/gldraphael/status/internal/feed"
 	githubTarget "github.com/gldraphael/status/internal/github"
 	"github.com/gldraphael/status/internal/server"
 	"github.com/gldraphael/status/internal/store"
@@ -36,7 +37,8 @@ func run(logger zerolog.Logger) error {
 	if err := cfg.Availability.Validate(); err != nil {
 		return fmt.Errorf("validate availability config: %w", err)
 	}
-	if err := cfg.Build.Validate(); err != nil {
+	buildInterval, err := cfg.Build.IntervalDuration()
+	if err != nil {
 		return fmt.Errorf("validate build config: %w", err)
 	}
 
@@ -60,10 +62,6 @@ func run(logger zerolog.Logger) error {
 
 	targets := buildTargets(cfg)
 	syncer := calendar.NewSyncer(st, calClient, targets, logger)
-	var (
-		availabilitySyncer   *availability.Syncer
-		availabilityProvider *availability.Provider
-	)
 
 	// Health-check endpoint.
 	mux := http.NewServeMux()
@@ -71,30 +69,9 @@ func run(logger zerolog.Logger) error {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	if cfg.Availability.IsEnabled {
-		workingHours, err := availability.ParseWorkingHours(cfg.Availability.WorkingHours.Start, cfg.Availability.WorkingHours.End)
-		if err != nil {
-			return fmt.Errorf("parse availability working hours: %w", err)
-		}
-
-		availabilityClient, err := availability.NewClient(cfg.Availability.CalendarURL)
-		if err != nil {
-			return fmt.Errorf("create availability client: %w", err)
-		}
-		availabilityBlocks, err := availability.ParseBlocks(cfg.Availability.Blocks)
-		if err != nil {
-			return fmt.Errorf("parse availability blocks: %w", err)
-		}
-
-		if cfg.Availability.ExcludeEnglandBankHolidays {
-			if err := availability.SyncHolidaySnapshot(ctx, st, availability.NewHolidayClient(), logger); err != nil {
-				return fmt.Errorf("seed bank holidays: %w", err)
-			}
-		}
-
-		availabilityProvider = availability.NewProvider(st, availabilityBlocks, workingHours, cfg.Availability.ExcludeEnglandBankHolidays)
-		availabilitySyncer = availability.NewSyncer(st, availabilityProvider, availabilityClient, logger)
-		mux.Handle("GET /api/availability", availability.NewHandler(availabilityProvider, cfg.Availability.APIKey, logger))
+	availabilitySyncer, err := registerAvailability(ctx, cfg.Availability, st, mux, logger)
+	if err != nil {
+		return err
 	}
 
 	// Start the sync loops only after all startup validation succeeds.
@@ -112,22 +89,69 @@ func run(logger zerolog.Logger) error {
 	}
 
 	// Start deploy loop if enabled.
-	if cfg.Build.IsEnabled {
-		interval, err := time.ParseDuration(cfg.Build.Interval)
-		if err != nil {
-			return fmt.Errorf("parse build.interval: %w", err)
-		}
-		client := deploy.NewHookClient(cfg.Build.CfDeployHook)
-		deployer := deploy.NewDeployer(client, st, logger)
-		go func() {
-			if err := deployer.Run(ctx, interval); err != nil {
-				logger.Error().Err(err).Msg("build deploy loop exited")
-			}
-		}()
-	}
+	startDeployLoop(ctx, cfg.Build, buildInterval, st, logger)
 
 	srv := server.New(cfg.Port, mux, logger)
 	return srv.Start(ctx)
+}
+
+func registerAvailability(ctx context.Context, cfg config.AvailabilityConfig, st *store.Store, mux *http.ServeMux, logger zerolog.Logger) (*availability.Syncer, error) {
+	if !cfg.IsEnabled {
+		return nil, nil
+	}
+
+	workingHours, err := availability.ParseWorkingHours(cfg.WorkingHours.Start, cfg.WorkingHours.End)
+	if err != nil {
+		return nil, fmt.Errorf("parse availability working hours: %w", err)
+	}
+	availabilityBlocks, err := parseAvailabilityBlocks(cfg.Blocks)
+	if err != nil {
+		return nil, fmt.Errorf("parse availability blocks: %w", err)
+	}
+	availabilityClient, err := feed.NewClient(cfg.CalendarURL, 30*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("create availability client: %w", err)
+	}
+
+	if cfg.ExcludeEnglandBankHolidays {
+		holidayClient, err := availability.NewHolidayClient()
+		if err != nil {
+			return nil, fmt.Errorf("create bank holiday client: %w", err)
+		}
+		if err := availability.SyncHolidaySnapshot(ctx, st, holidayClient, logger); err != nil {
+			return nil, fmt.Errorf("seed bank holidays: %w", err)
+		}
+	}
+
+	provider := availability.NewProvider(st, availabilityBlocks, workingHours, cfg.ExcludeEnglandBankHolidays)
+	mux.Handle("GET /api/availability", availability.NewHandler(provider, cfg.APIKey, logger))
+	return availability.NewSyncer(st, provider, availabilityClient, logger), nil
+}
+
+func parseAvailabilityBlocks(blocks []config.AvailabilityBlockConfig) ([]availability.Block, error) {
+	parsed := make([]availability.Block, 0, len(blocks))
+	for i, block := range blocks {
+		parsedBlock, err := availability.ParseBlock(block.Name, block.Start, block.End)
+		if err != nil {
+			return nil, fmt.Errorf("availability.blocks[%d]: %w", i, err)
+		}
+		parsed = append(parsed, parsedBlock)
+	}
+	return parsed, nil
+}
+
+func startDeployLoop(ctx context.Context, cfg config.BuildConfig, interval time.Duration, st *store.Store, logger zerolog.Logger) {
+	if !cfg.IsEnabled {
+		return
+	}
+
+	client := deploy.NewHookClient(cfg.CfDeployHook)
+	deployer := deploy.NewDeployer(client, st, logger)
+	go func() {
+		if err := deployer.Run(ctx, interval); err != nil {
+			logger.Error().Err(err).Msg("build deploy loop exited")
+		}
+	}()
 }
 
 // buildTargets constructs the list of enabled status targets from config.

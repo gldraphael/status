@@ -17,14 +17,15 @@ type Client interface {
 
 // Deployer periodically triggers builds using the provided Client.
 type Deployer struct {
-	client Client
-	store  *store.Store
-	logger zerolog.Logger
+	client  Client
+	store   *store.Store
+	logger  zerolog.Logger
+	nowFunc func() time.Time
 }
 
 // NewDeployer constructs a Deployer.
 func NewDeployer(client Client, st *store.Store, logger zerolog.Logger) *Deployer {
-	return &Deployer{client: client, store: st, logger: logger}
+	return &Deployer{client: client, store: st, logger: logger, nowFunc: time.Now}
 }
 
 // Run starts the deploy loop. It schedules the first deploy at the next time
@@ -35,7 +36,7 @@ func (d *Deployer) Run(ctx context.Context, interval time.Duration) error {
 		return fmt.Errorf("interval must be >= 1m")
 	}
 
-	now := time.Now()
+	now := d.nowFunc()
 	first := nextAlignedTime(now, interval, 1)
 	// Wait until the first scheduled time.
 	if wait := time.Until(first); wait > 0 {
@@ -59,7 +60,7 @@ func (d *Deployer) Run(ctx context.Context, interval time.Duration) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			d.triggerIfDirty(ctx, time.Now())
+			d.triggerIfDirty(ctx, d.nowFunc())
 		}
 	}
 }

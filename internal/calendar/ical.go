@@ -1,15 +1,14 @@
 package calendar
 
 import (
-	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
 	ics "github.com/arran4/golang-ical"
 	"github.com/teambition/rrule-go"
+
+	"github.com/gldraphael/status/internal/timeutil"
 )
 
 // ParsedEvent is an event extracted from an iCal file.
@@ -26,47 +25,6 @@ type ParsedEvent struct {
 type ParsedCalendar struct {
 	Timezone string
 	Events   []ParsedEvent
-}
-
-// FetchICalendarBody fetches the raw iCal body from the given URL.
-func FetchICalendarBody(ctx context.Context, calendarURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, calendarURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch calendar: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch calendar: unexpected status %s", resp.Status)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	return body, nil
-}
-
-// FetchAndParseICalendar fetches and parses an iCal file from the given URL.
-func FetchAndParseICalendar(ctx context.Context, calendarURL string) ([]ParsedEvent, error) {
-	body, err := FetchICalendarBody(ctx, calendarURL)
-	if err != nil {
-		return nil, err
-	}
-
-	now := time.Now()
-	parsed, err := ParseICalendar(body, now.Add(-24*time.Hour), now.Add(24*time.Hour))
-	if err != nil {
-		return nil, err
-	}
-	return parsed.Events, nil
 }
 
 // ParseICalendar parses an iCal stream and expands recurring events within the
@@ -152,7 +110,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 
 	for _, base := range baseEvents {
 		if base.rrule == "" {
-			if overlaps(base.startTime, base.endTime, windowStart, windowEnd) {
+			if timeutil.Overlaps(base.startTime, base.endTime, windowStart, windowEnd) {
 				parsed.Events = append(parsed.Events, ParsedEvent{
 					ID:        base.id,
 					Summary:   base.summary,
@@ -174,7 +132,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 				duration := base.endTime.Sub(base.startTime)
 				for _, inst := range instances {
 					endAt := inst.Add(duration)
-					if !overlaps(inst, endAt, windowStart, windowEnd) {
+					if !timeutil.Overlaps(inst, endAt, windowStart, windowEnd) {
 						continue
 					}
 					parsed.Events = append(parsed.Events, ParsedEvent{
@@ -190,7 +148,7 @@ func ParseICalendar(data []byte, windowStart, windowEnd time.Time) (*ParsedCalen
 			}
 		}
 
-		if overlaps(base.startTime, base.endTime, windowStart, windowEnd) {
+		if timeutil.Overlaps(base.startTime, base.endTime, windowStart, windowEnd) {
 			parsed.Events = append(parsed.Events, ParsedEvent{
 				ID:        base.id,
 				Summary:   base.summary,
@@ -214,25 +172,6 @@ func ExtractICalendarTimezone(data []byte) (string, error) {
 	return calendarTimezone(cal), nil
 }
 
-// parseICalendar is a compatibility wrapper used by the existing tests.
-func parseICalendar(data interface{}, now time.Time) ([]ParsedEvent, error) {
-	var body []byte
-	switch v := data.(type) {
-	case []byte:
-		body = v
-	case string:
-		body = []byte(v)
-	default:
-		return nil, fmt.Errorf("unsupported data type")
-	}
-
-	parsed, err := ParseICalendar(body, now.Add(-24*time.Hour), now.Add(24*time.Hour))
-	if err != nil {
-		return nil, err
-	}
-	return parsed.Events, nil
-}
-
 func calendarTimezone(cal *ics.Calendar) string {
 	for _, prop := range cal.CalendarProperties {
 		switch prop.IANAToken {
@@ -243,8 +182,4 @@ func calendarTimezone(cal *ics.Calendar) string {
 		}
 	}
 	return "UTC"
-}
-
-func overlaps(start, end, windowStart, windowEnd time.Time) bool {
-	return start.Before(windowEnd) && end.After(windowStart)
 }

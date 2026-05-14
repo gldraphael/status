@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // chdir changes the working directory for the duration of the test.
@@ -21,13 +22,40 @@ func chdir(t *testing.T, dir string) {
 	t.Cleanup(func() { os.Chdir(orig) })
 }
 
+var configEnvKeys = []string{
+	"PORT",
+	"PEBBLE_PATH",
+	"CALENDAR_URL",
+	"GITHUB_TOKEN",
+	"AVAILABILITY_IS_ENABLED",
+	"AVAILABILITY_CALENDAR_URL",
+	"AVAILABILITY_API_KEY",
+	"AVAILABILITY_WORKING_HOURS_START",
+	"AVAILABILITY_WORKING_HOURS_END",
+	"AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS",
+	"BUILD_IS_ENABLED",
+	"BUILD_INTERVAL",
+	"BUILD_CF_DEPLOY_HOOK",
+}
+
+func clearConfigEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range configEnvKeys {
+		t.Setenv(key, "")
+	}
+}
+
+func writeConfigYAML(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLoad_Defaults(t *testing.T) {
 	// Work in a temp dir with no config.yaml.
 	chdir(t, t.TempDir())
-
-	for _, key := range []string{"PORT", "PEBBLE_PATH", "CALENDAR_URL", "GITHUB_TOKEN", "GITHUB_USERNAME", "AVAILABILITY_IS_ENABLED", "AVAILABILITY_CALENDAR_URL", "AVAILABILITY_API_KEY", "AVAILABILITY_WORKING_HOURS_START", "AVAILABILITY_WORKING_HOURS_END", "AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "BUILD_IS_ENABLED", "BUILD_INTERVAL", "BUILD_CF_DEPLOY_HOOK"} {
-		t.Setenv(key, "")
-	}
+	clearConfigEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -55,18 +83,12 @@ func TestLoad_Defaults(t *testing.T) {
 
 func TestLoad_FromEnv(t *testing.T) {
 	chdir(t, t.TempDir())
+	clearConfigEnv(t)
 
 	t.Setenv("PORT", "9090")
 	t.Setenv("PEBBLE_PATH", "/tmp/mydb")
 	t.Setenv("CALENDAR_URL", "https://calendar.example.com/ical.ics")
 	t.Setenv("GITHUB_TOKEN", "gh-abc123")
-	t.Setenv("GITHUB_USERNAME", "")
-	t.Setenv("AVAILABILITY_IS_ENABLED", "")
-	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
-	t.Setenv("AVAILABILITY_API_KEY", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
-	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -88,12 +110,8 @@ func TestLoad_FromEnv(t *testing.T) {
 
 func TestLoad_AvailabilityFromEnv(t *testing.T) {
 	chdir(t, t.TempDir())
+	clearConfigEnv(t)
 
-	t.Setenv("PORT", "")
-	t.Setenv("PEBBLE_PATH", "")
-	t.Setenv("CALENDAR_URL", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	t.Setenv("GITHUB_USERNAME", "")
 	t.Setenv("AVAILABILITY_IS_ENABLED", "true")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "https://availability.example.com/ical.ics")
 	t.Setenv("AVAILABILITY_API_KEY", "secret-key")
@@ -124,17 +142,9 @@ func TestLoad_AvailabilityFromEnv(t *testing.T) {
 
 func TestLoad_InvalidPort(t *testing.T) {
 	chdir(t, t.TempDir())
-	t.Setenv("PEBBLE_PATH", "")
-	t.Setenv("CALENDAR_URL", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	t.Setenv("GITHUB_USERNAME", "")
+	clearConfigEnv(t)
+
 	t.Setenv("PORT", "not-a-number")
-	t.Setenv("AVAILABILITY_IS_ENABLED", "")
-	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
-	t.Setenv("AVAILABILITY_API_KEY", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
-	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for invalid PORT, got nil")
@@ -144,19 +154,7 @@ func TestLoad_InvalidPort(t *testing.T) {
 func TestLoad_FromYAML(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-
-	// Clear env vars so they don't interfere with YAML loading
-	t.Setenv("PORT", "")
-	t.Setenv("PEBBLE_PATH", "")
-	t.Setenv("CALENDAR_URL", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	t.Setenv("GITHUB_USERNAME", "")
-	t.Setenv("AVAILABILITY_IS_ENABLED", "")
-	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
-	t.Setenv("AVAILABILITY_API_KEY", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
-	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
+	clearConfigEnv(t)
 
 	yaml := `
 port: 7777
@@ -166,9 +164,7 @@ targets:
   github:
     token: gh-yaml
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeConfigYAML(t, dir, yaml)
 
 	cfg, err := Load()
 	if err != nil {
@@ -191,18 +187,7 @@ targets:
 func TestLoad_AvailabilityFromYAML(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-
-	t.Setenv("PORT", "")
-	t.Setenv("PEBBLE_PATH", "")
-	t.Setenv("CALENDAR_URL", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	t.Setenv("GITHUB_USERNAME", "")
-	t.Setenv("AVAILABILITY_IS_ENABLED", "")
-	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
-	t.Setenv("AVAILABILITY_API_KEY", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
-	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
+	clearConfigEnv(t)
 
 	yaml := `
 availability:
@@ -221,9 +206,7 @@ availability:
       start: "17:30"
       end: "22:00"
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeConfigYAML(t, dir, yaml)
 
 	cfg, err := Load()
 	if err != nil {
@@ -255,11 +238,8 @@ availability:
 func TestLoad_EnvOverridesYAML(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
+	clearConfigEnv(t)
 
-	t.Setenv("PEBBLE_PATH", "")
-	t.Setenv("GITHUB_USERNAME", "")
-	t.Setenv("CALENDAR_URL", "")
-	t.Setenv("GITHUB_TOKEN", "")
 	yaml := `
 port: 7777
 calendar_url: https://yaml-cal.example.com/ical.ics
@@ -272,20 +252,12 @@ targets:
   github:
     token: gh-yaml
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeConfigYAML(t, dir, yaml)
 
 	// Env var must win over yaml.
 	t.Setenv("GITHUB_TOKEN", "gh-env")
 	t.Setenv("PORT", "9999")
 	t.Setenv("CALENDAR_URL", "https://env-cal.example.com/ical.ics")
-	t.Setenv("AVAILABILITY_IS_ENABLED", "")
-	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
-	t.Setenv("AVAILABILITY_API_KEY", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
-	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -305,18 +277,7 @@ targets:
 func TestLoad_AvailabilityEnvOverridesYAML(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-
-	t.Setenv("PORT", "")
-	t.Setenv("PEBBLE_PATH", "")
-	t.Setenv("CALENDAR_URL", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	t.Setenv("GITHUB_USERNAME", "")
-	t.Setenv("AVAILABILITY_IS_ENABLED", "")
-	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
-	t.Setenv("AVAILABILITY_API_KEY", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
-	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
+	clearConfigEnv(t)
 
 	yaml := `
 availability:
@@ -332,9 +293,7 @@ availability:
       start: "09:00"
       end: "12:00"
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeConfigYAML(t, dir, yaml)
 
 	t.Setenv("AVAILABILITY_IS_ENABLED", "true")
 	t.Setenv("AVAILABILITY_CALENDAR_URL", "https://env-availability.example.com/ical.ics")
@@ -367,27 +326,13 @@ availability:
 func TestLoad_YAMLOverridesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	chdir(t, dir)
-
-	// Clear env vars so they don't interfere with YAML loading
-	t.Setenv("PORT", "")
-	t.Setenv("PEBBLE_PATH", "")
-	t.Setenv("CALENDAR_URL", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	t.Setenv("GITHUB_USERNAME", "")
-	t.Setenv("AVAILABILITY_IS_ENABLED", "")
-	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
-	t.Setenv("AVAILABILITY_API_KEY", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
-	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
+	clearConfigEnv(t)
 
 	yaml := `
 port: 3000
 calendar_url: https://cal.example.com/ical.ics
 `
-	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(yaml), 0600); err != nil {
-		t.Fatal(err)
-	}
+	writeConfigYAML(t, dir, yaml)
 
 	cfg, err := Load()
 	if err != nil {
@@ -408,17 +353,8 @@ calendar_url: https://cal.example.com/ical.ics
 func TestLoad_MissingYAML(t *testing.T) {
 	// No config.yaml in the temp dir — should load without error.
 	chdir(t, t.TempDir())
-	t.Setenv("PORT", "")
-	t.Setenv("PEBBLE_PATH", "")
-	t.Setenv("CALENDAR_URL", "")
-	t.Setenv("GITHUB_TOKEN", "")
-	t.Setenv("GITHUB_USERNAME", "")
-	t.Setenv("AVAILABILITY_IS_ENABLED", "")
-	t.Setenv("AVAILABILITY_CALENDAR_URL", "")
-	t.Setenv("AVAILABILITY_API_KEY", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "")
-	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "")
+	clearConfigEnv(t)
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load without config.yaml: %v", err)
@@ -492,6 +428,61 @@ func TestAvailabilityValidate(t *testing.T) {
 		cfg := AvailabilityConfig{IsEnabled: true}
 		if err := cfg.Validate(); err == nil {
 			t.Fatal("expected error for incomplete enabled availability config")
+		}
+	})
+}
+
+func TestBuildValidateAndIntervalDuration(t *testing.T) {
+	t.Run("disabled", func(t *testing.T) {
+		cfg := BuildConfig{}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+		dur, err := cfg.IntervalDuration()
+		if err != nil {
+			t.Fatalf("IntervalDuration: %v", err)
+		}
+		if dur != 0 {
+			t.Fatalf("duration: got %v, want 0", dur)
+		}
+	})
+
+	t.Run("enabled valid", func(t *testing.T) {
+		cfg := BuildConfig{
+			IsEnabled:    true,
+			Interval:     "10m",
+			CfDeployHook: "https://example.com/hook",
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+		dur, err := cfg.IntervalDuration()
+		if err != nil {
+			t.Fatalf("IntervalDuration: %v", err)
+		}
+		if dur != 10*time.Minute {
+			t.Fatalf("duration: got %v, want 10m", dur)
+		}
+	})
+
+	t.Run("interval too short", func(t *testing.T) {
+		cfg := BuildConfig{
+			IsEnabled:    true,
+			Interval:     "30s",
+			CfDeployHook: "https://example.com/hook",
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for short interval")
+		}
+	})
+
+	t.Run("missing hook", func(t *testing.T) {
+		cfg := BuildConfig{
+			IsEnabled: true,
+			Interval:  "10m",
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for missing deploy hook")
 		}
 	})
 }

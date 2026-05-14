@@ -4,10 +4,9 @@ package store
 //   status             → current status (single-tenant)
 //   availability       → cached availability calendar snapshot
 //   availability_dirty → flag indicating availability changed since last deploy
+//   availability_last_deployed → availability entries JSON from the last successful deploy
 //   availability_holidays → cached England bank holiday snapshot
 //   event:{eventID}    → Google Calendar event state
-//   channel:{channelID} → push notification channel registration
-//   sync:{calendarID}  → incremental sync token
 
 func statusKey() []byte {
 	return []byte("status")
@@ -35,14 +34,6 @@ func eventKey(eventID string) []byte {
 
 func eventKeyPrefix() []byte {
 	return []byte("event:")
-}
-
-func channelKey(channelID string) []byte {
-	return []byte("channel:" + channelID)
-}
-
-func syncTokenKey(calendarID string) []byte {
-	return []byte("sync:" + calendarID)
 }
 
 // prefixUpperBound returns the smallest key that is lexicographically greater
