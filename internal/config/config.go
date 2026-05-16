@@ -16,35 +16,98 @@ import (
 
 // Config holds application configuration.
 type Config struct {
-	Port        int    `koanf:"port"`
-	PebblePath  string `koanf:"pebble_path"`
-	CalendarURL string `koanf:"calendar_url"` // iCal URL (e.g. https://calendar.google.com/calendar/ical/.../public/basic.ics)
+	Port       int    `koanf:"port"`
+	PebblePath string `koanf:"pebble_path"`
 
-	Targets      TargetsConfig      `koanf:"targets"`
+	Status       StatusConfig       `koanf:"status"`
 	Availability AvailabilityConfig `koanf:"availability"`
-	Build        BuildConfig        `koanf:"build"`
 }
 
-// TargetsConfig holds the configuration for each supported status target.
+// StatusConfig configures status sources and targets.
+type StatusConfig struct {
+	Sources StatusSourcesConfig `koanf:"sources"`
+	Targets StatusTargetsConfig `koanf:"targets"`
+}
+
+// StatusSourcesConfig configures status data sources.
+type StatusSourcesConfig struct {
+	ICal ICalSourceConfig `koanf:"ical"`
+}
+
+// ICalSourceConfig configures an iCal feed source.
+type ICalSourceConfig struct {
+	URL      string `koanf:"url"`
+	Interval string `koanf:"interval"`
+}
+
+// StatusTargetsConfig holds the configuration for each supported status target.
 // A target is enabled when its token is non-empty.
 // Add a new field here to support additional targets in the future.
-type TargetsConfig struct {
+type StatusTargetsConfig struct {
 	GitHub GitHubTargetConfig `koanf:"github"`
 }
 
 // GitHubTargetConfig configures the GitHub status target.
 type GitHubTargetConfig struct {
-	Token string `koanf:"token"` // personal access token — requires user scope
+	Token string `koanf:"token"` // personal access token; requires user scope
 }
 
-// AvailabilityConfig configures the optional availability feature.
+// Enabled reports whether the GitHub status target is configured.
+func (g GitHubTargetConfig) Enabled() bool {
+	return strings.TrimSpace(g.Token) != ""
+}
+
+// Enabled reports whether any status target is configured.
+func (t StatusTargetsConfig) Enabled() bool {
+	return t.GitHub.Enabled()
+}
+
+// AvailabilityConfig configures availability sources, serving, targets, and rules.
 type AvailabilityConfig struct {
-	IsEnabled                  bool                           `koanf:"is_enabled"`
-	CalendarURL                string                         `koanf:"calendar_url"`
-	APIKey                     string                         `koanf:"api_key"`
+	Sources                    AvailabilitySourcesConfig      `koanf:"sources"`
+	API                        AvailabilityAPIConfig          `koanf:"api"`
+	Targets                    AvailabilityTargetsConfig      `koanf:"targets"`
 	WorkingHours               AvailabilityWorkingHoursConfig `koanf:"working_hours"`
 	ExcludeEnglandBankHolidays bool                           `koanf:"exclude_england_bank_holidays"`
 	Blocks                     []AvailabilityBlockConfig      `koanf:"blocks"`
+}
+
+// AvailabilitySourcesConfig configures availability data sources.
+type AvailabilitySourcesConfig struct {
+	ICal ICalSourceConfig `koanf:"ical"`
+}
+
+// AvailabilityAPIConfig configures the optional availability HTTP API.
+type AvailabilityAPIConfig struct {
+	IsEnabled bool   `koanf:"is_enabled"`
+	Key       string `koanf:"key"`
+}
+
+// AvailabilityTargetsConfig holds availability publish targets.
+type AvailabilityTargetsConfig struct {
+	CloudflarePages CloudflarePagesTargetConfig `koanf:"cloudflare_pages"`
+}
+
+// CloudflarePagesTargetConfig configures Cloudflare Pages build hook publishes.
+type CloudflarePagesTargetConfig struct {
+	IsEnabled  bool   `koanf:"is_enabled"`
+	Interval   string `koanf:"interval"`
+	DeployHook string `koanf:"deploy_hook"`
+}
+
+// Enabled reports whether the Cloudflare Pages target is configured.
+func (c CloudflarePagesTargetConfig) Enabled() bool {
+	return c.IsEnabled
+}
+
+// Enabled reports whether any availability target is configured.
+func (t AvailabilityTargetsConfig) Enabled() bool {
+	return t.CloudflarePages.Enabled()
+}
+
+// Enabled reports whether availability computation is needed.
+func (a AvailabilityConfig) Enabled() bool {
+	return a.API.IsEnabled || a.Targets.Enabled()
 }
 
 // AvailabilityWorkingHoursConfig defines the weekday working-hours window.
@@ -60,29 +123,24 @@ type AvailabilityBlockConfig struct {
 	End   string `koanf:"end"`   // HH:MM, 24-hour clock
 }
 
-// BuildConfig configures automatic builds/deploys.
-type BuildConfig struct {
-	IsEnabled    bool   `koanf:"is_enabled"`
-	Interval     string `koanf:"interval"`
-	CfDeployHook string `koanf:"cf_deploy_hook"`
-}
-
 // envMapping maps environment variable names to koanf config keys.
 // Only variables listed here are loaded; all others are ignored.
 var envMapping = map[string]string{
-	"PORT":                                       "port",
-	"PEBBLE_PATH":                                "pebble_path",
-	"CALENDAR_URL":                               "calendar_url",
-	"GITHUB_TOKEN":                               "targets.github.token",
-	"AVAILABILITY_IS_ENABLED":                    "availability.is_enabled",
-	"AVAILABILITY_CALENDAR_URL":                  "availability.calendar_url",
-	"AVAILABILITY_API_KEY":                       "availability.api_key",
-	"AVAILABILITY_WORKING_HOURS_START":           "availability.working_hours.start",
-	"AVAILABILITY_WORKING_HOURS_END":             "availability.working_hours.end",
-	"AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS": "availability.exclude_england_bank_holidays",
-	"BUILD_IS_ENABLED":                           "build.is_enabled",
-	"BUILD_INTERVAL":                             "build.interval",
-	"BUILD_CF_DEPLOY_HOOK":                       "build.cf_deploy_hook",
+	"PORT":                                              "port",
+	"PEBBLE_PATH":                                       "pebble_path",
+	"STATUS_SOURCES_ICAL_URL":                           "status.sources.ical.url",
+	"STATUS_SOURCES_ICAL_INTERVAL":                      "status.sources.ical.interval",
+	"STATUS_TARGETS_GITHUB_TOKEN":                       "status.targets.github.token",
+	"AVAILABILITY_SOURCES_ICAL_URL":                     "availability.sources.ical.url",
+	"AVAILABILITY_SOURCES_ICAL_INTERVAL":                "availability.sources.ical.interval",
+	"AVAILABILITY_API_IS_ENABLED":                       "availability.api.is_enabled",
+	"AVAILABILITY_API_KEY":                              "availability.api.key",
+	"AVAILABILITY_WORKING_HOURS_START":                  "availability.working_hours.start",
+	"AVAILABILITY_WORKING_HOURS_END":                    "availability.working_hours.end",
+	"AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS":        "availability.exclude_england_bank_holidays",
+	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_IS_ENABLED":  "availability.targets.cloudflare_pages.is_enabled",
+	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_INTERVAL":    "availability.targets.cloudflare_pages.interval",
+	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK": "availability.targets.cloudflare_pages.deploy_hook",
 }
 
 // configFile is the optional YAML config file loaded between defaults and env vars.
@@ -98,18 +156,21 @@ func Load() (*Config, error) {
 
 	// 1. Defaults.
 	if err := k.Load(confmap.Provider(map[string]interface{}{
-		"port":                             8080,
-		"pebble_path":                      "./data",
-		"availability.working_hours.start": "09:00",
-		"availability.working_hours.end":   "17:50",
-		"availability.exclude_england_bank_holidays": false,
-		"build.is_enabled":                           false,
-		"build.interval":                             "10m",
+		"port":                                             8080,
+		"pebble_path":                                      "./data",
+		"status.sources.ical.interval":                     "5m",
+		"availability.sources.ical.interval":               "5m",
+		"availability.working_hours.start":                 "09:00",
+		"availability.working_hours.end":                   "17:50",
+		"availability.exclude_england_bank_holidays":       false,
+		"availability.api.is_enabled":                      false,
+		"availability.targets.cloudflare_pages.is_enabled": false,
+		"availability.targets.cloudflare_pages.interval":   "10m",
 	}, "."), nil); err != nil {
 		return nil, fmt.Errorf("load defaults: %w", err)
 	}
 
-	// 2. config.yaml — optional.
+	// 2. config.yaml - optional.
 	if _, err := os.Stat(configFile); err == nil {
 		if err := k.Load(file.Provider(configFile), yaml.Parser()); err != nil {
 			return nil, fmt.Errorf("load %s: %w", configFile, err)
@@ -134,23 +195,65 @@ func Load() (*Config, error) {
 	return &cfg, nil
 }
 
-// Validate checks the configured feature-specific settings that cannot be
-// validated by koanf decoding alone.
-func (a AvailabilityConfig) Validate() error {
-	if !a.IsEnabled {
+// Validate checks cross-feature configuration and feature-specific settings.
+func (c Config) Validate() error {
+	if err := c.Status.Validate(); err != nil {
+		return err
+	}
+	if err := c.Availability.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Validate checks status source and target settings.
+func (s StatusConfig) Validate() error {
+	if !s.Targets.Enabled() {
 		return nil
+	}
+	if strings.TrimSpace(s.Sources.ICal.URL) == "" {
+		return fmt.Errorf("status.sources.ical.url is required when at least one status target is enabled")
+	}
+	if _, err := s.Sources.ICal.IntervalDuration("status.sources.ical.interval"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// IntervalDuration returns the validated source polling interval.
+func (s ICalSourceConfig) IntervalDuration(path string) (time.Duration, error) {
+	if strings.TrimSpace(s.Interval) == "" {
+		return 0, fmt.Errorf("%s is required", path)
+	}
+	dur, err := time.ParseDuration(s.Interval)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	if dur < time.Minute {
+		return 0, fmt.Errorf("%s must be at least 1m", path)
+	}
+	return dur, nil
+}
+
+// Validate checks the configured availability settings.
+func (a AvailabilityConfig) Validate() error {
+	if !a.Enabled() {
+		return nil
+	}
+	if strings.TrimSpace(a.Sources.ICal.URL) == "" {
+		return fmt.Errorf("availability.sources.ical.url is required when availability is enabled")
+	}
+	if _, err := a.Sources.ICal.IntervalDuration("availability.sources.ical.interval"); err != nil {
+		return err
+	}
+	if a.API.IsEnabled && strings.TrimSpace(a.API.Key) == "" {
+		return fmt.Errorf("availability.api.key is required when availability API is enabled")
 	}
 	if a.WorkingHours.Start == "" {
 		return fmt.Errorf("availability.working_hours.start is required when availability is enabled")
 	}
 	if a.WorkingHours.End == "" {
 		return fmt.Errorf("availability.working_hours.end is required when availability is enabled")
-	}
-	if a.CalendarURL == "" {
-		return fmt.Errorf("availability.calendar_url is required when availability is enabled")
-	}
-	if a.APIKey == "" {
-		return fmt.Errorf("availability.api_key is required when availability is enabled")
 	}
 	if _, _, err := timeutil.ParseClockRange(a.WorkingHours.Start, a.WorkingHours.End); err != nil {
 		return fmt.Errorf("availability.working_hours: %w", err)
@@ -172,35 +275,40 @@ func (a AvailabilityConfig) Validate() error {
 			return fmt.Errorf("availability.blocks[%d]: %w", i, err)
 		}
 	}
+	if err := a.Targets.CloudflarePages.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
-// Validate checks the configured build settings.
-func (b BuildConfig) Validate() error {
-	if !b.IsEnabled {
+// Validate checks the Cloudflare Pages target settings.
+func (c CloudflarePagesTargetConfig) Validate() error {
+	if !c.IsEnabled {
 		return nil
 	}
-	_, err := b.IntervalDuration()
-	return err
+	if _, err := c.IntervalDuration(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(c.DeployHook) == "" {
+		return fmt.Errorf("availability.targets.cloudflare_pages.deploy_hook is required when Cloudflare Pages target is enabled")
+	}
+	return nil
 }
 
-// IntervalDuration returns the validated build interval.
-func (b BuildConfig) IntervalDuration() (time.Duration, error) {
-	if !b.IsEnabled {
+// IntervalDuration returns the validated Cloudflare Pages publish interval.
+func (c CloudflarePagesTargetConfig) IntervalDuration() (time.Duration, error) {
+	if !c.IsEnabled {
 		return 0, nil
 	}
-	if strings.TrimSpace(b.Interval) == "" {
-		return 0, fmt.Errorf("build.interval is required when build is enabled")
+	if strings.TrimSpace(c.Interval) == "" {
+		return 0, fmt.Errorf("availability.targets.cloudflare_pages.interval is required when Cloudflare Pages target is enabled")
 	}
-	dur, err := time.ParseDuration(b.Interval)
+	dur, err := time.ParseDuration(c.Interval)
 	if err != nil {
-		return 0, fmt.Errorf("build.interval: %w", err)
+		return 0, fmt.Errorf("availability.targets.cloudflare_pages.interval: %w", err)
 	}
 	if dur < time.Minute {
-		return 0, fmt.Errorf("build.interval must be at least 1m")
-	}
-	if strings.TrimSpace(b.CfDeployHook) == "" {
-		return 0, fmt.Errorf("build.cf_deploy_hook is required when build is enabled")
+		return 0, fmt.Errorf("availability.targets.cloudflare_pages.interval must be at least 1m")
 	}
 	return dur, nil
 }
