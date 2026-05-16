@@ -64,12 +64,11 @@ func (t StatusTargetsConfig) Enabled() bool {
 
 // AvailabilityConfig configures availability sources, serving, targets, and rules.
 type AvailabilityConfig struct {
-	Sources                    AvailabilitySourcesConfig      `koanf:"sources"`
-	API                        AvailabilityAPIConfig          `koanf:"api"`
-	Targets                    AvailabilityTargetsConfig      `koanf:"targets"`
-	WorkingHours               AvailabilityWorkingHoursConfig `koanf:"working_hours"`
-	ExcludeEnglandBankHolidays bool                           `koanf:"exclude_england_bank_holidays"`
-	Blocks                     []AvailabilityBlockConfig      `koanf:"blocks"`
+	Sources      AvailabilitySourcesConfig      `koanf:"sources"`
+	API          AvailabilityAPIConfig          `koanf:"api"`
+	Targets      AvailabilityTargetsConfig      `koanf:"targets"`
+	Suppressions AvailabilitySuppressionsConfig `koanf:"suppressions"`
+	Blocks       []AvailabilityBlockConfig      `koanf:"blocks"`
 }
 
 // AvailabilitySourcesConfig configures availability data sources.
@@ -110,6 +109,12 @@ func (a AvailabilityConfig) Enabled() bool {
 	return a.API.IsEnabled || a.Targets.Enabled()
 }
 
+// AvailabilitySuppressionsConfig configures availability suppression rules.
+type AvailabilitySuppressionsConfig struct {
+	WorkingHours               AvailabilityWorkingHoursConfig `koanf:"working_hours"`
+	ExcludeEnglandBankHolidays bool                           `koanf:"exclude_england_bank_holidays"`
+}
+
 // AvailabilityWorkingHoursConfig defines the weekday working-hours window.
 type AvailabilityWorkingHoursConfig struct {
 	Start string `koanf:"start"` // HH:MM, 24-hour clock
@@ -126,21 +131,21 @@ type AvailabilityBlockConfig struct {
 // envMapping maps environment variable names to koanf config keys.
 // Only variables listed here are loaded; all others are ignored.
 var envMapping = map[string]string{
-	"PORT":                                              "port",
-	"PEBBLE_PATH":                                       "pebble_path",
-	"STATUS_SOURCES_ICAL_URL":                           "status.sources.ical.url",
-	"STATUS_SOURCES_ICAL_INTERVAL":                      "status.sources.ical.interval",
-	"STATUS_TARGETS_GITHUB_TOKEN":                       "status.targets.github.token",
-	"AVAILABILITY_SOURCES_ICAL_URL":                     "availability.sources.ical.url",
-	"AVAILABILITY_SOURCES_ICAL_INTERVAL":                "availability.sources.ical.interval",
-	"AVAILABILITY_API_IS_ENABLED":                       "availability.api.is_enabled",
-	"AVAILABILITY_API_KEY":                              "availability.api.key",
-	"AVAILABILITY_WORKING_HOURS_START":                  "availability.working_hours.start",
-	"AVAILABILITY_WORKING_HOURS_END":                    "availability.working_hours.end",
-	"AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS":        "availability.exclude_england_bank_holidays",
-	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_IS_ENABLED":  "availability.targets.cloudflare_pages.is_enabled",
-	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_INTERVAL":    "availability.targets.cloudflare_pages.interval",
-	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK": "availability.targets.cloudflare_pages.deploy_hook",
+	"PORT":                                                    "port",
+	"PEBBLE_PATH":                                             "pebble_path",
+	"STATUS_SOURCES_ICAL_URL":                                 "status.sources.ical.url",
+	"STATUS_SOURCES_ICAL_INTERVAL":                            "status.sources.ical.interval",
+	"STATUS_TARGETS_GITHUB_TOKEN":                             "status.targets.github.token",
+	"AVAILABILITY_SOURCES_ICAL_URL":                           "availability.sources.ical.url",
+	"AVAILABILITY_SOURCES_ICAL_INTERVAL":                      "availability.sources.ical.interval",
+	"AVAILABILITY_API_IS_ENABLED":                             "availability.api.is_enabled",
+	"AVAILABILITY_API_KEY":                                    "availability.api.key",
+	"AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START":           "availability.suppressions.working_hours.start",
+	"AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_END":             "availability.suppressions.working_hours.end",
+	"AVAILABILITY_SUPPRESSIONS_EXCLUDE_ENGLAND_BANK_HOLIDAYS": "availability.suppressions.exclude_england_bank_holidays",
+	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_IS_ENABLED":        "availability.targets.cloudflare_pages.is_enabled",
+	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_INTERVAL":          "availability.targets.cloudflare_pages.interval",
+	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK":       "availability.targets.cloudflare_pages.deploy_hook",
 }
 
 // configFile is the optional YAML config file loaded between defaults and env vars.
@@ -156,16 +161,16 @@ func Load() (*Config, error) {
 
 	// 1. Defaults.
 	if err := k.Load(confmap.Provider(map[string]interface{}{
-		"port":                                             8080,
-		"pebble_path":                                      "./data",
-		"status.sources.ical.interval":                     "5m",
-		"availability.sources.ical.interval":               "5m",
-		"availability.working_hours.start":                 "09:00",
-		"availability.working_hours.end":                   "17:50",
-		"availability.exclude_england_bank_holidays":       false,
-		"availability.api.is_enabled":                      false,
-		"availability.targets.cloudflare_pages.is_enabled": false,
-		"availability.targets.cloudflare_pages.interval":   "10m",
+		"port":                               8080,
+		"pebble_path":                        "./data",
+		"status.sources.ical.interval":       "5m",
+		"availability.sources.ical.interval": "5m",
+		"availability.suppressions.working_hours.start":           "09:00",
+		"availability.suppressions.working_hours.end":             "17:50",
+		"availability.suppressions.exclude_england_bank_holidays": false,
+		"availability.api.is_enabled":                             false,
+		"availability.targets.cloudflare_pages.is_enabled":        false,
+		"availability.targets.cloudflare_pages.interval":          "10m",
 	}, "."), nil); err != nil {
 		return nil, fmt.Errorf("load defaults: %w", err)
 	}
@@ -249,14 +254,14 @@ func (a AvailabilityConfig) Validate() error {
 	if a.API.IsEnabled && strings.TrimSpace(a.API.Key) == "" {
 		return fmt.Errorf("availability.api.key is required when availability API is enabled")
 	}
-	if a.WorkingHours.Start == "" {
-		return fmt.Errorf("availability.working_hours.start is required when availability is enabled")
+	if a.Suppressions.WorkingHours.Start == "" {
+		return fmt.Errorf("availability.suppressions.working_hours.start is required when availability is enabled")
 	}
-	if a.WorkingHours.End == "" {
-		return fmt.Errorf("availability.working_hours.end is required when availability is enabled")
+	if a.Suppressions.WorkingHours.End == "" {
+		return fmt.Errorf("availability.suppressions.working_hours.end is required when availability is enabled")
 	}
-	if _, _, err := timeutil.ParseClockRange(a.WorkingHours.Start, a.WorkingHours.End); err != nil {
-		return fmt.Errorf("availability.working_hours: %w", err)
+	if _, _, err := timeutil.ParseClockRange(a.Suppressions.WorkingHours.Start, a.Suppressions.WorkingHours.End); err != nil {
+		return fmt.Errorf("availability.suppressions.working_hours: %w", err)
 	}
 	if len(a.Blocks) == 0 {
 		return fmt.Errorf("availability.blocks is required when availability is enabled")

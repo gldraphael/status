@@ -119,7 +119,7 @@ func registerAvailability(ctx context.Context, cfg config.AvailabilityConfig, st
 		return nil, nil
 	}
 
-	workingHours, err := availability.ParseWorkingHours(cfg.WorkingHours.Start, cfg.WorkingHours.End)
+	workingHours, err := availability.ParseWorkingHours(cfg.Suppressions.WorkingHours.Start, cfg.Suppressions.WorkingHours.End)
 	if err != nil {
 		return nil, fmt.Errorf("parse availability working hours: %w", err)
 	}
@@ -132,7 +132,7 @@ func registerAvailability(ctx context.Context, cfg config.AvailabilityConfig, st
 		return nil, fmt.Errorf("create availability client: %w", err)
 	}
 
-	if cfg.ExcludeEnglandBankHolidays {
+	if cfg.Suppressions.ExcludeEnglandBankHolidays {
 		holidayClient, err := availability.NewHolidayClient()
 		if err != nil {
 			return nil, fmt.Errorf("create bank holiday client: %w", err)
@@ -142,7 +142,7 @@ func registerAvailability(ctx context.Context, cfg config.AvailabilityConfig, st
 		}
 	}
 
-	provider := availability.NewProvider(st, availabilityBlocks, workingHours, cfg.ExcludeEnglandBankHolidays)
+	provider := availability.NewProvider(st, availabilityBlocks, workingHours, cfg.Suppressions.ExcludeEnglandBankHolidays)
 	if cfg.API.IsEnabled {
 		mux.Handle("GET /api/availability", availability.NewHandler(provider, cfg.API.Key, logger))
 	}

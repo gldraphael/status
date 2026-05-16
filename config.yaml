@@ -38,12 +38,13 @@ availability:
       # Cloudflare Pages build hook URL. Prefer AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK for secrets.
       deploy_hook: ""
 
-  # Weekday working hours, used to suppress availability unless it's a bank holiday.
-  working_hours:
-    start: "09:00"
-    end: "17:50"
-  # Set to true to fetch GOV.UK England-and-Wales bank holidays and lift weekday suppression on those dates.
-  exclude_england_bank_holidays: true
+  suppressions:
+    # Weekday working hours, used to suppress availability unless it's a bank holiday.
+    working_hours:
+      start: "09:00"
+      end: "17:50"
+    # Set to true to fetch GOV.UK England-and-Wales bank holidays and lift weekday suppression on those dates.
+    exclude_england_bank_holidays: true
   # Ordered availability windows, checked from top to bottom.
   blocks:
     - name: All day

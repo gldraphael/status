@@ -39,11 +39,11 @@ env: []
   #   value: "true"
   # - name: AVAILABILITY_API_KEY
   #   value: "secret-key"
-  # - name: AVAILABILITY_WORKING_HOURS_START
+  # - name: AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START
   #   value: "09:00"
-  # - name: AVAILABILITY_WORKING_HOURS_END
+  # - name: AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_END
   #   value: "17:50"
-  # - name: AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS
+  # - name: AVAILABILITY_SUPPRESSIONS_EXCLUDE_ENGLAND_BANK_HOLIDAYS
   #   value: "true"
   # Cloudflare Pages target env vars supported by the app:
   # - name: AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_IS_ENABLED

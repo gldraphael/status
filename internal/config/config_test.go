@@ -32,9 +32,9 @@ var configEnvKeys = []string{
 	"AVAILABILITY_SOURCES_ICAL_INTERVAL",
 	"AVAILABILITY_API_IS_ENABLED",
 	"AVAILABILITY_API_KEY",
-	"AVAILABILITY_WORKING_HOURS_START",
-	"AVAILABILITY_WORKING_HOURS_END",
-	"AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS",
+	"AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START",
+	"AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_END",
+	"AVAILABILITY_SUPPRESSIONS_EXCLUDE_ENGLAND_BANK_HOLIDAYS",
 	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_IS_ENABLED",
 	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_INTERVAL",
 	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK",
@@ -83,10 +83,10 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Availability.Sources.ICal.Interval != "5m" {
 		t.Errorf("Availability.Sources.ICal.Interval: got %q, want 5m", cfg.Availability.Sources.ICal.Interval)
 	}
-	if cfg.Availability.WorkingHours.Start != "09:00" || cfg.Availability.WorkingHours.End != "17:50" {
-		t.Errorf("Availability.WorkingHours: got %+v, want start 09:00 end 17:50", cfg.Availability.WorkingHours)
+	if cfg.Availability.Suppressions.WorkingHours.Start != "09:00" || cfg.Availability.Suppressions.WorkingHours.End != "17:50" {
+		t.Errorf("Availability.Suppressions.WorkingHours: got %+v, want start 09:00 end 17:50", cfg.Availability.Suppressions.WorkingHours)
 	}
-	if cfg.Availability.ExcludeEnglandBankHolidays {
+	if cfg.Availability.Suppressions.ExcludeEnglandBankHolidays {
 		t.Error("expected bank holiday exclusion to be disabled by default")
 	}
 	if cfg.Availability.API.IsEnabled {
@@ -139,9 +139,9 @@ func TestLoad_AvailabilityFromEnv(t *testing.T) {
 	t.Setenv("AVAILABILITY_SOURCES_ICAL_INTERVAL", "7m")
 	t.Setenv("AVAILABILITY_API_IS_ENABLED", "true")
 	t.Setenv("AVAILABILITY_API_KEY", "secret-key")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "08:30")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "17:15")
-	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "true")
+	t.Setenv("AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START", "08:30")
+	t.Setenv("AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_END", "17:15")
+	t.Setenv("AVAILABILITY_SUPPRESSIONS_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "true")
 	t.Setenv("AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_IS_ENABLED", "true")
 	t.Setenv("AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_INTERVAL", "12m")
 	t.Setenv("AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK", "https://example.com/hook")
@@ -162,10 +162,10 @@ func TestLoad_AvailabilityFromEnv(t *testing.T) {
 	if cfg.Availability.API.Key != "secret-key" {
 		t.Errorf("Availability.API.Key: got %q", cfg.Availability.API.Key)
 	}
-	if cfg.Availability.WorkingHours.Start != "08:30" || cfg.Availability.WorkingHours.End != "17:15" {
-		t.Errorf("Availability.WorkingHours: got %+v", cfg.Availability.WorkingHours)
+	if cfg.Availability.Suppressions.WorkingHours.Start != "08:30" || cfg.Availability.Suppressions.WorkingHours.End != "17:15" {
+		t.Errorf("Availability.Suppressions.WorkingHours: got %+v", cfg.Availability.Suppressions.WorkingHours)
 	}
-	if !cfg.Availability.ExcludeEnglandBankHolidays {
+	if !cfg.Availability.Suppressions.ExcludeEnglandBankHolidays {
 		t.Error("expected holiday exclusion to be enabled from env")
 	}
 	if !cfg.Availability.Targets.CloudflarePages.IsEnabled {
@@ -249,10 +249,11 @@ availability:
       is_enabled: true
       interval: 14m
       deploy_hook: https://example.com/hook
-  working_hours:
-    start: "09:00"
-    end: "17:50"
-  exclude_england_bank_holidays: true
+  suppressions:
+    working_hours:
+      start: "09:00"
+      end: "17:50"
+    exclude_england_bank_holidays: true
   blocks:
     - name: First half
       start: "09:00"
@@ -279,10 +280,10 @@ availability:
 	if cfg.Availability.API.Key != "secret-yaml-key" {
 		t.Errorf("Availability.API.Key: got %q", cfg.Availability.API.Key)
 	}
-	if cfg.Availability.WorkingHours.Start != "09:00" || cfg.Availability.WorkingHours.End != "17:50" {
-		t.Errorf("Availability.WorkingHours: got %+v", cfg.Availability.WorkingHours)
+	if cfg.Availability.Suppressions.WorkingHours.Start != "09:00" || cfg.Availability.Suppressions.WorkingHours.End != "17:50" {
+		t.Errorf("Availability.Suppressions.WorkingHours: got %+v", cfg.Availability.Suppressions.WorkingHours)
 	}
-	if !cfg.Availability.ExcludeEnglandBankHolidays {
+	if !cfg.Availability.Suppressions.ExcludeEnglandBankHolidays {
 		t.Error("expected holiday exclusion to be enabled from YAML")
 	}
 	if !cfg.Availability.Targets.CloudflarePages.IsEnabled {
@@ -325,10 +326,11 @@ availability:
   api:
     is_enabled: false
     key: yaml-key
-  working_hours:
-    start: "10:00"
-    end: "16:00"
-  exclude_england_bank_holidays: false
+  suppressions:
+    working_hours:
+      start: "10:00"
+      end: "16:00"
+    exclude_england_bank_holidays: false
 `
 	writeConfigYAML(t, dir, yaml)
 
@@ -340,9 +342,9 @@ availability:
 	t.Setenv("AVAILABILITY_SOURCES_ICAL_INTERVAL", "9m")
 	t.Setenv("AVAILABILITY_API_IS_ENABLED", "true")
 	t.Setenv("AVAILABILITY_API_KEY", "env-key")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_START", "08:45")
-	t.Setenv("AVAILABILITY_WORKING_HOURS_END", "17:15")
-	t.Setenv("AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "true")
+	t.Setenv("AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START", "08:45")
+	t.Setenv("AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_END", "17:15")
+	t.Setenv("AVAILABILITY_SUPPRESSIONS_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "true")
 
 	cfg, err := Load()
 	if err != nil {
@@ -372,10 +374,10 @@ availability:
 	if cfg.Availability.API.Key != "env-key" {
 		t.Errorf("Availability.API.Key: got %q", cfg.Availability.API.Key)
 	}
-	if cfg.Availability.WorkingHours.Start != "08:45" || cfg.Availability.WorkingHours.End != "17:15" {
-		t.Errorf("Availability.WorkingHours: got %+v", cfg.Availability.WorkingHours)
+	if cfg.Availability.Suppressions.WorkingHours.Start != "08:45" || cfg.Availability.Suppressions.WorkingHours.End != "17:15" {
+		t.Errorf("Availability.Suppressions.WorkingHours: got %+v", cfg.Availability.Suppressions.WorkingHours)
 	}
-	if !cfg.Availability.ExcludeEnglandBankHolidays {
+	if !cfg.Availability.Suppressions.ExcludeEnglandBankHolidays {
 		t.Error("expected env to enable bank holiday exclusion")
 	}
 }
@@ -441,9 +443,11 @@ func validAvailabilityConfig() AvailabilityConfig {
 			IsEnabled: true,
 			Key:       "secret",
 		},
-		WorkingHours: AvailabilityWorkingHoursConfig{
-			Start: "09:00",
-			End:   "17:50",
+		Suppressions: AvailabilitySuppressionsConfig{
+			WorkingHours: AvailabilityWorkingHoursConfig{
+				Start: "09:00",
+				End:   "17:50",
+			},
 		},
 		Blocks: []AvailabilityBlockConfig{
 			{Name: "Morning", Start: "09:00", End: "12:00"},
@@ -496,7 +500,7 @@ func TestAvailabilityValidate(t *testing.T) {
 
 	t.Run("enabled invalid working hours", func(t *testing.T) {
 		cfg := validAvailabilityConfig()
-		cfg.WorkingHours.Start = "bad-value"
+		cfg.Suppressions.WorkingHours.Start = "bad-value"
 		if err := cfg.Validate(); err == nil {
 			t.Fatal("expected error for invalid working hours")
 		}
@@ -504,7 +508,7 @@ func TestAvailabilityValidate(t *testing.T) {
 
 	t.Run("enabled missing working hours start", func(t *testing.T) {
 		cfg := validAvailabilityConfig()
-		cfg.WorkingHours.Start = ""
+		cfg.Suppressions.WorkingHours.Start = ""
 		if err := cfg.Validate(); err == nil {
 			t.Fatal("expected error for missing working hours start")
 		}
