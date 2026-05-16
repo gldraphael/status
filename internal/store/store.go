@@ -16,17 +16,8 @@ type Status struct {
 	Expiration time.Time `json:"expiration"`
 }
 
-// Event represents a Google Calendar event persisted in the store.
-type Event struct {
-	ID        string    `json:"id"`
-	Summary   string    `json:"summary"`
-	StartTime time.Time `json:"start_time"`
-	EndTime   time.Time `json:"end_time"`
-	Cancelled bool      `json:"cancelled"`
-}
-
-// AvailabilitySnapshot stores the latest fetched availability calendar data.
-type AvailabilitySnapshot struct {
+// CalendarSnapshot stores the latest fetched raw calendar feed.
+type CalendarSnapshot struct {
 	Body      string    `json:"body"`
 	Timezone  string    `json:"timezone"`
 	FetchedAt time.Time `json:"fetched_at"`
@@ -88,6 +79,38 @@ func (s *Store) deleteKey(key []byte, label string) error {
 	return nil
 }
 
+func setBatchJSON(batch *pebble.Batch, key []byte, value any, label string) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", label, err)
+	}
+	if err := batch.Set(key, data, nil); err != nil {
+		return fmt.Errorf("set %s: %w", label, err)
+	}
+	return nil
+}
+
+func deleteBatchKey(batch *pebble.Batch, key []byte, label string) error {
+	err := batch.Delete(key, nil)
+	if err != nil && !errors.Is(err, pebble.ErrNotFound) {
+		return fmt.Errorf("delete %s: %w", label, err)
+	}
+	return nil
+}
+
+func (s *Store) commitBatch(label string, fn func(*pebble.Batch) error) error {
+	batch := s.db.NewBatch()
+	defer batch.Close()
+
+	if err := fn(batch); err != nil {
+		return err
+	}
+	if err := batch.Commit(pebble.Sync); err != nil {
+		return fmt.Errorf("commit %s: %w", label, err)
+	}
+	return nil
+}
+
 func (s *Store) getJSON(key []byte, value any, label string) (bool, error) {
 	data, ok, err := s.getBytes(key, label)
 	if err != nil || !ok {
@@ -110,7 +133,7 @@ func (s *Store) setJSON(key []byte, value any, label string) error {
 // GetStatus returns the current status (O(1) lookup).
 func (s *Store) GetStatus() (*Status, bool, error) {
 	var st Status
-	ok, err := s.getJSON(statusKey(), &st, "status")
+	ok, err := s.getJSON(statusCurrentKey(), &st, "status")
 	if err != nil || !ok {
 		return nil, ok, err
 	}
@@ -119,58 +142,135 @@ func (s *Store) GetStatus() (*Status, bool, error) {
 
 // SetStatus persists the current status.
 func (s *Store) SetStatus(st *Status) error {
-	return s.setJSON(statusKey(), st, "status")
+	return s.setJSON(statusCurrentKey(), st, "status")
 }
 
 // DeleteStatus removes the stored status.
 func (s *Store) DeleteStatus() error {
-	return s.deleteKey(statusKey(), "status")
+	return s.deleteKey(statusCurrentKey(), "status")
 }
 
-// GetAvailabilitySnapshot returns the stored availability calendar snapshot.
-func (s *Store) GetAvailabilitySnapshot() (*AvailabilitySnapshot, bool, error) {
-	var snap AvailabilitySnapshot
-	ok, err := s.getJSON(availabilityKey(), &snap, "availability snapshot")
+// ReplaceStatusCurrent stores or clears the currently active status projection.
+func (s *Store) ReplaceStatusCurrent(current *Status) error {
+	if current == nil {
+		return s.DeleteStatus()
+	}
+	return s.SetStatus(current)
+}
+
+// GetStatusRawSnapshot returns the latest fetched raw status calendar snapshot.
+func (s *Store) GetStatusRawSnapshot() (*CalendarSnapshot, bool, error) {
+	var snap CalendarSnapshot
+	ok, err := s.getJSON(statusRawKey(), &snap, "status raw snapshot")
 	if err != nil || !ok {
 		return nil, ok, err
 	}
 	return &snap, true, nil
 }
 
-// SetAvailabilitySnapshot persists the latest availability calendar snapshot.
-func (s *Store) SetAvailabilitySnapshot(snap *AvailabilitySnapshot) error {
-	return s.setJSON(availabilityKey(), snap, "availability snapshot")
+// SetStatusRawSnapshot persists the latest raw status calendar snapshot.
+func (s *Store) SetStatusRawSnapshot(snap *CalendarSnapshot) error {
+	return s.setJSON(statusRawKey(), snap, "status raw snapshot")
+}
+
+// ReplaceStatusProjection atomically stores the fetched raw status snapshot
+// and the currently active status projection.
+func (s *Store) ReplaceStatusProjection(raw *CalendarSnapshot, current *Status) error {
+	return s.commitBatch("status projection", func(batch *pebble.Batch) error {
+		if err := setBatchJSON(batch, statusRawKey(), raw, "status raw snapshot"); err != nil {
+			return err
+		}
+		if current == nil {
+			return deleteBatchKey(batch, statusCurrentKey(), "status")
+		}
+		return setBatchJSON(batch, statusCurrentKey(), current, "status")
+	})
+}
+
+// GetAvailabilityRawSnapshot returns the stored raw availability calendar snapshot.
+func (s *Store) GetAvailabilityRawSnapshot() (*CalendarSnapshot, bool, error) {
+	var snap CalendarSnapshot
+	ok, err := s.getJSON(availabilityRawKey(), &snap, "availability raw snapshot")
+	if err != nil || !ok {
+		return nil, ok, err
+	}
+	return &snap, true, nil
+}
+
+// SetAvailabilityRawSnapshot persists the latest raw availability calendar snapshot.
+func (s *Store) SetAvailabilityRawSnapshot(snap *CalendarSnapshot) error {
+	return s.setJSON(availabilityRawKey(), snap, "availability raw snapshot")
+}
+
+// GetAvailabilityCurrent returns the precomputed availability API response JSON.
+func (s *Store) GetAvailabilityCurrent() ([]byte, bool, error) {
+	return s.getBytes(availabilityCurrentKey(), "current availability")
+}
+
+// SetAvailabilityCurrent persists the precomputed availability API response JSON.
+func (s *Store) SetAvailabilityCurrent(data []byte) error {
+	return s.setBytes(availabilityCurrentKey(), data, "current availability")
+}
+
+// ClearAvailabilityCurrent removes the precomputed availability API response JSON.
+func (s *Store) ClearAvailabilityCurrent() error {
+	return s.deleteKey(availabilityCurrentKey(), "current availability")
+}
+
+// ReplaceAvailabilityProjection atomically stores the fetched raw availability
+// snapshot and the precomputed API response JSON.
+func (s *Store) ReplaceAvailabilityProjection(raw *CalendarSnapshot, currentJSON []byte) error {
+	return s.commitBatch("availability projection", func(batch *pebble.Batch) error {
+		if err := setBatchJSON(batch, availabilityRawKey(), raw, "availability raw snapshot"); err != nil {
+			return err
+		}
+		if err := batch.Set(availabilityCurrentKey(), currentJSON, nil); err != nil {
+			return fmt.Errorf("set current availability: %w", err)
+		}
+		return nil
+	})
 }
 
 // GetAvailabilityDirty returns the pending availability entries JSON if the calendar has changed since the last deployment.
 func (s *Store) GetAvailabilityDirty() ([]byte, bool, error) {
-	return s.getBytes(availabilityDirtyKey(), "availability dirty")
+	return s.getBytes(availabilityDeployDirtyKey(), "availability dirty")
 }
 
 // SetAvailabilityDirty persists the pending availability entries JSON.
 func (s *Store) SetAvailabilityDirty(data []byte) error {
-	return s.setBytes(availabilityDirtyKey(), data, "availability dirty")
+	return s.setBytes(availabilityDeployDirtyKey(), data, "availability dirty")
 }
 
 // ClearAvailabilityDirty removes the availability dirty flag.
 func (s *Store) ClearAvailabilityDirty() error {
-	return s.deleteKey(availabilityDirtyKey(), "availability dirty")
+	return s.deleteKey(availabilityDeployDirtyKey(), "availability dirty")
 }
 
 // GetLastDeployedAvailability returns the availability entries JSON from the last successful deployment.
 func (s *Store) GetLastDeployedAvailability() ([]byte, bool, error) {
-	return s.getBytes(availabilityLastDeployedKey(), "availability last deployed")
+	return s.getBytes(availabilityDeployLastKey(), "availability last deployed")
 }
 
 // SetLastDeployedAvailability persists the availability entries JSON from a successful deployment.
 func (s *Store) SetLastDeployedAvailability(data []byte) error {
-	return s.setBytes(availabilityLastDeployedKey(), data, "availability last deployed")
+	return s.setBytes(availabilityDeployLastKey(), data, "availability last deployed")
+}
+
+// MarkAvailabilityDeployed atomically stores the deployed availability JSON and
+// clears the pending dirty marker.
+func (s *Store) MarkAvailabilityDeployed(data []byte) error {
+	return s.commitBatch("availability deployment state", func(batch *pebble.Batch) error {
+		if err := batch.Set(availabilityDeployLastKey(), data, nil); err != nil {
+			return fmt.Errorf("set availability last deployed: %w", err)
+		}
+		return deleteBatchKey(batch, availabilityDeployDirtyKey(), "availability dirty")
+	})
 }
 
 // GetHolidaySnapshot returns the stored bank holiday snapshot.
 func (s *Store) GetHolidaySnapshot() (*HolidaySnapshot, bool, error) {
 	var snap HolidaySnapshot
-	ok, err := s.getJSON(availabilityHolidaysKey(), &snap, "holiday snapshot")
+	ok, err := s.getJSON(availabilityHolidaysEnglandKey(), &snap, "holiday snapshot")
 	if err != nil || !ok {
 		return nil, ok, err
 	}
@@ -179,49 +279,5 @@ func (s *Store) GetHolidaySnapshot() (*HolidaySnapshot, bool, error) {
 
 // SetHolidaySnapshot persists the latest bank holiday snapshot.
 func (s *Store) SetHolidaySnapshot(snap *HolidaySnapshot) error {
-	return s.setJSON(availabilityHolidaysKey(), snap, "holiday snapshot")
-}
-
-// GetEvent retrieves a stored calendar event.
-func (s *Store) GetEvent(eventID string) (*Event, bool, error) {
-	var ev Event
-	ok, err := s.getJSON(eventKey(eventID), &ev, "event")
-	if err != nil || !ok {
-		return nil, ok, err
-	}
-	return &ev, true, nil
-}
-
-// SetEvent persists a calendar event.
-func (s *Store) SetEvent(ev *Event) error {
-	return s.setJSON(eventKey(ev.ID), ev, "event")
-}
-
-// ListActiveEvents returns events that overlap with now
-// (not cancelled, started at or before now, ending after now).
-func (s *Store) ListActiveEvents(now time.Time) ([]*Event, error) {
-	prefix := eventKeyPrefix()
-	iter, err := s.db.NewIter(&pebble.IterOptions{
-		LowerBound: prefix,
-		UpperBound: prefixUpperBound(prefix),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("new iter: %w", err)
-	}
-	defer iter.Close()
-
-	var active []*Event
-	for valid := iter.First(); valid; valid = iter.Next() {
-		var ev Event
-		if err := json.Unmarshal(iter.Value(), &ev); err != nil {
-			continue
-		}
-		if !ev.Cancelled && !ev.StartTime.After(now) && ev.EndTime.After(now) {
-			active = append(active, &ev)
-		}
-	}
-	if err := iter.Error(); err != nil {
-		return nil, fmt.Errorf("iter events: %w", err)
-	}
-	return active, nil
+	return s.setJSON(availabilityHolidaysEnglandKey(), snap, "holiday snapshot")
 }

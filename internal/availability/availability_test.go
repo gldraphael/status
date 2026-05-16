@@ -3,6 +3,7 @@ package availability
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -241,15 +242,18 @@ END:VCALENDAR`
 func TestHandler_AuthorizationAndResponse(t *testing.T) {
 	st := newTestStore(t)
 	blocks := testBlocks(t)
-	if err := st.SetAvailabilitySnapshot(&store.AvailabilitySnapshot{
+	if err := st.SetAvailabilityRawSnapshot(&store.CalendarSnapshot{
 		Body:      baseCalendarBody(),
 		Timezone:  "Europe/London",
 		FetchedAt: time.Now().UTC(),
 	}); err != nil {
-		t.Fatalf("SetAvailabilitySnapshot: %v", err)
+		t.Fatalf("SetAvailabilityRawSnapshot: %v", err)
 	}
 
 	p := NewProvider(st, blocks, testWorkingHours(t), false)
+	if err := p.RefreshCurrentFromStoredSnapshot(); err != nil {
+		t.Fatalf("RefreshCurrentFromStoredSnapshot: %v", err)
+	}
 	h := NewHandler(p, "secret", zerolog.Nop())
 
 	t.Run("unauthorized", func(t *testing.T) {
@@ -287,43 +291,62 @@ func TestHandler_AuthorizationAndResponse(t *testing.T) {
 	})
 }
 
-func TestHandler_HolidaySnapshotRequiredWhenEnabled(t *testing.T) {
+func TestProvider_HolidaySnapshotRequiredWhenRefreshing(t *testing.T) {
 	st := newTestStore(t)
 	blocks := testBlocks(t)
-	if err := st.SetAvailabilitySnapshot(&store.AvailabilitySnapshot{
+	if err := st.SetAvailabilityRawSnapshot(&store.CalendarSnapshot{
 		Body:      baseCalendarBody(),
 		Timezone:  "Europe/London",
 		FetchedAt: time.Now().UTC(),
 	}); err != nil {
-		t.Fatalf("SetAvailabilitySnapshot: %v", err)
+		t.Fatalf("SetAvailabilityRawSnapshot: %v", err)
 	}
 
 	p := NewProvider(st, blocks, testWorkingHours(t), true)
-	h := NewHandler(p, "secret", zerolog.Nop())
 
+	if err := p.RefreshCurrentFromStoredSnapshot(); !errors.Is(err, ErrSnapshotNotFound) {
+		t.Fatalf("RefreshCurrentFromStoredSnapshot error: got %v, want %v", err, ErrSnapshotNotFound)
+	}
+}
+
+func TestHandler_ServesPrecomputedAvailability(t *testing.T) {
+	st := newTestStore(t)
+	current := []byte(`[{"day_of_week":"Monday","block":"Morning","date":"2026-04-06"}]`)
+	if err := st.SetAvailabilityCurrent(current); err != nil {
+		t.Fatalf("SetAvailabilityCurrent: %v", err)
+	}
+
+	p := NewProvider(st, testBlocks(t), testWorkingHours(t), false)
+	h := NewHandler(p, "secret", zerolog.Nop())
 	req := httptest.NewRequest(http.MethodGet, "/api/availability", nil)
 	req.Header.Set("Authorization", "secret")
 	rec := httptest.NewRecorder()
 
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Body.String(); got != string(current) {
+		t.Fatalf("body: got %s, want %s", got, current)
 	}
 }
 
 func TestProvider_GetEntriesJSON(t *testing.T) {
 	st := newTestStore(t)
 	blocks := testBlocks(t)
-	if err := st.SetAvailabilitySnapshot(&store.AvailabilitySnapshot{
+	if err := st.SetAvailabilityRawSnapshot(&store.CalendarSnapshot{
 		Body:      baseCalendarBody(),
 		Timezone:  "Europe/London",
 		FetchedAt: time.Now().UTC(),
 	}); err != nil {
-		t.Fatalf("SetAvailabilitySnapshot: %v", err)
+		t.Fatalf("SetAvailabilityRawSnapshot: %v", err)
 	}
 
 	p := NewProvider(st, blocks, testWorkingHours(t), false)
+	if err := p.RefreshCurrentFromStoredSnapshot(); err != nil {
+		t.Fatalf("RefreshCurrentFromStoredSnapshot: %v", err)
+	}
 
 	data, err := p.GetEntriesJSON()
 	if err != nil {
@@ -339,7 +362,27 @@ func TestProvider_GetEntriesJSON(t *testing.T) {
 	}
 }
 
-func TestSyncer_StoresAvailabilitySnapshot(t *testing.T) {
+func TestProvider_RefreshCurrentFromStoredSnapshotClearsCurrentWhenMissing(t *testing.T) {
+	st := newTestStore(t)
+	if err := st.SetAvailabilityCurrent([]byte(`[{"date":"stale"}]`)); err != nil {
+		t.Fatalf("SetAvailabilityCurrent: %v", err)
+	}
+	p := NewProvider(st, testBlocks(t), testWorkingHours(t), false)
+
+	err := p.RefreshCurrentFromStoredSnapshot()
+	if !errors.Is(err, ErrSnapshotNotFound) {
+		t.Fatalf("RefreshCurrentFromStoredSnapshot error: got %v, want %v", err, ErrSnapshotNotFound)
+	}
+	_, ok, err := st.GetAvailabilityCurrent()
+	if err != nil {
+		t.Fatalf("GetAvailabilityCurrent: %v", err)
+	}
+	if ok {
+		t.Fatal("expected stale current availability to be cleared")
+	}
+}
+
+func TestSyncer_StoresAvailabilityRawSnapshot(t *testing.T) {
 	st := newTestStore(t)
 	blocks := testBlocks(t)
 	p := NewProvider(st, blocks, testWorkingHours(t), false)
@@ -352,9 +395,9 @@ func TestSyncer_StoresAvailabilitySnapshot(t *testing.T) {
 		t.Fatalf("syncOnce: %v", err)
 	}
 
-	snap, ok, err := st.GetAvailabilitySnapshot()
+	snap, ok, err := st.GetAvailabilityRawSnapshot()
 	if err != nil {
-		t.Fatalf("GetAvailabilitySnapshot: %v", err)
+		t.Fatalf("GetAvailabilityRawSnapshot: %v", err)
 	}
 	if !ok {
 		t.Fatal("expected stored availability snapshot")
@@ -364,17 +407,17 @@ func TestSyncer_StoresAvailabilitySnapshot(t *testing.T) {
 	}
 }
 
-func TestSyncer_PreservesAvailabilitySnapshotOnFetchError(t *testing.T) {
+func TestSyncer_PreservesAvailabilityRawSnapshotOnFetchError(t *testing.T) {
 	st := newTestStore(t)
 	blocks := testBlocks(t)
 	p := NewProvider(st, blocks, testWorkingHours(t), false)
-	seed := &store.AvailabilitySnapshot{
+	seed := &store.CalendarSnapshot{
 		Body:      "seed",
 		Timezone:  "UTC",
 		FetchedAt: time.Now().UTC(),
 	}
-	if err := st.SetAvailabilitySnapshot(seed); err != nil {
-		t.Fatalf("SetAvailabilitySnapshot: %v", err)
+	if err := st.SetAvailabilityRawSnapshot(seed); err != nil {
+		t.Fatalf("SetAvailabilityRawSnapshot: %v", err)
 	}
 
 	s := NewSyncer(st, p, &mockFetchClient{err: context.Canceled}, zerolog.Nop())
@@ -383,9 +426,9 @@ func TestSyncer_PreservesAvailabilitySnapshotOnFetchError(t *testing.T) {
 		t.Fatal("expected syncOnce to fail")
 	}
 
-	snap, ok, err := st.GetAvailabilitySnapshot()
+	snap, ok, err := st.GetAvailabilityRawSnapshot()
 	if err != nil {
-		t.Fatalf("GetAvailabilitySnapshot: %v", err)
+		t.Fatalf("GetAvailabilityRawSnapshot: %v", err)
 	}
 	if !ok {
 		t.Fatal("expected snapshot to remain after failure")

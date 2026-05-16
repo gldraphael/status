@@ -1,14 +1,13 @@
 package availability
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/rs/zerolog"
 )
 
-// Handler serves availability entries from the stored snapshot.
+// Handler serves precomputed availability entries from the store.
 type Handler struct {
 	provider *Provider
 	apiKey   string
@@ -31,7 +30,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := h.provider.GetEntries()
+	data, err := h.provider.GetEntriesJSON()
 	if err != nil {
 		if errors.Is(err, ErrSnapshotNotFound) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -43,7 +42,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(entries); err != nil {
-		h.logger.Error().Err(err).Msg("encode availability response")
+	if _, err := w.Write(data); err != nil {
+		h.logger.Error().Err(err).Msg("write availability response")
 	}
 }

@@ -2,6 +2,7 @@ package calendar
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,12 +15,15 @@ import (
 // --- mocks ---
 
 type mockCalendarClient struct {
-	events []ChangedEvent
-	err    error
+	body []byte
+	err  error
 }
 
-func (m *mockCalendarClient) FetchEvents(_ context.Context) ([]ChangedEvent, error) {
-	return m.events, m.err
+func (m *mockCalendarClient) Fetch(_ context.Context) ([]byte, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.body, nil
 }
 
 // mockTarget records the last Sync call for assertions.
@@ -49,22 +53,49 @@ func newTestSyncer(t *testing.T, cal calendarClient, targets []target.Target) (*
 	return s, st
 }
 
+type statusEventSpec struct {
+	id        string
+	summary   string
+	startTime time.Time
+	endTime   time.Time
+	cancelled bool
+}
+
+func statusCalendarBody(events ...statusEventSpec) []byte {
+	var b strings.Builder
+	b.WriteString("BEGIN:VCALENDAR\n")
+	b.WriteString("VERSION:2.0\n")
+	b.WriteString("X-WR-TIMEZONE:UTC\n")
+	for _, ev := range events {
+		b.WriteString("BEGIN:VEVENT\n")
+		b.WriteString("UID:" + ev.id + "\n")
+		b.WriteString("DTSTART:" + ev.startTime.UTC().Format("20060102T150405Z") + "\n")
+		b.WriteString("DTEND:" + ev.endTime.UTC().Format("20060102T150405Z") + "\n")
+		b.WriteString("SUMMARY:" + ev.summary + "\n")
+		if ev.cancelled {
+			b.WriteString("STATUS:CANCELLED\n")
+		}
+		b.WriteString("END:VEVENT\n")
+	}
+	b.WriteString("END:VCALENDAR")
+	return []byte(b.String())
+}
+
 // --- syncOnce tests ---
 
 func TestSyncOnce_SetsStatusFromActiveEvent(t *testing.T) {
-	now := time.Now()
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
 	cal := &mockCalendarClient{
-		events: []ChangedEvent{
-			{
-				ID:        "e1",
-				Summary:   "Team Sync",
-				StartTime: now.Add(-10 * time.Minute),
-				EndTime:   now.Add(50 * time.Minute),
-			},
-		},
+		body: statusCalendarBody(statusEventSpec{
+			id:        "e1",
+			summary:   "Team Sync",
+			startTime: now.Add(-10 * time.Minute),
+			endTime:   now.Add(50 * time.Minute),
+		}),
 	}
 	tgt := &mockTarget{}
 	s, st := newTestSyncer(t, cal, []target.Target{tgt})
+	s.nowFunc = func() time.Time { return now }
 
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -80,30 +111,32 @@ func TestSyncOnce_SetsStatusFromActiveEvent(t *testing.T) {
 		t.Errorf("status emoji: got %q, want %q", tgt.status.Emoji, ":calendar:")
 	}
 
-	// Verify event is stored.
-	events, err := st.ListActiveEvents(now)
+	// Verify the fetched raw snapshot is stored.
+	snap, ok, err := st.GetStatusRawSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].Summary != "Team Sync" {
-		t.Errorf("stored event: got %v", events)
+	if !ok {
+		t.Fatal("expected status raw snapshot")
+	}
+	if !strings.Contains(snap.Body, "SUMMARY:Team Sync") || snap.Timezone != "UTC" {
+		t.Errorf("stored status raw snapshot: got %+v", snap)
 	}
 }
 
 func TestSyncOnce_ClearsStatusWhenNoActiveEvents(t *testing.T) {
-	now := time.Now()
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
 	tgt := &mockTarget{}
 	cal := &mockCalendarClient{
-		events: []ChangedEvent{
-			{
-				ID:        "e1",
-				Summary:   "Past meeting",
-				StartTime: now.Add(-2 * time.Hour),
-				EndTime:   now.Add(-1 * time.Hour),
-			},
-		},
+		body: statusCalendarBody(statusEventSpec{
+			id:        "e1",
+			summary:   "Past meeting",
+			startTime: now.Add(-2 * time.Hour),
+			endTime:   now.Add(-1 * time.Hour),
+		}),
 	}
 	s, _ := newTestSyncer(t, cal, []target.Target{tgt})
+	s.nowFunc = func() time.Time { return now }
 
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -118,19 +151,18 @@ func TestSyncOnce_ClearsStatusWhenNoActiveEvents(t *testing.T) {
 }
 
 func TestSyncOnce_MultipleTargets(t *testing.T) {
-	now := time.Now()
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
 	tgt1, tgt2 := &mockTarget{}, &mockTarget{}
 	cal := &mockCalendarClient{
-		events: []ChangedEvent{
-			{
-				ID:        "e1",
-				Summary:   "Standup",
-				StartTime: now.Add(-5 * time.Minute),
-				EndTime:   now.Add(25 * time.Minute),
-			},
-		},
+		body: statusCalendarBody(statusEventSpec{
+			id:        "e1",
+			summary:   "Standup",
+			startTime: now.Add(-5 * time.Minute),
+			endTime:   now.Add(25 * time.Minute),
+		}),
 	}
 	s, _ := newTestSyncer(t, cal, []target.Target{tgt1, tgt2})
+	s.nowFunc = func() time.Time { return now }
 
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -147,20 +179,19 @@ func TestSyncOnce_MultipleTargets(t *testing.T) {
 }
 
 func TestSyncOnce_CancelledEventsIgnored(t *testing.T) {
-	now := time.Now()
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
 	tgt := &mockTarget{}
 	cal := &mockCalendarClient{
-		events: []ChangedEvent{
-			{
-				ID:        "c1",
-				Summary:   "Cancelled meeting",
-				StartTime: now.Add(-15 * time.Minute),
-				EndTime:   now.Add(45 * time.Minute),
-				Cancelled: true,
-			},
-		},
+		body: statusCalendarBody(statusEventSpec{
+			id:        "c1",
+			summary:   "Cancelled meeting",
+			startTime: now.Add(-15 * time.Minute),
+			endTime:   now.Add(45 * time.Minute),
+			cancelled: true,
+		}),
 	}
 	s, _ := newTestSyncer(t, cal, []target.Target{tgt})
+	s.nowFunc = func() time.Time { return now }
 
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -171,20 +202,53 @@ func TestSyncOnce_CancelledEventsIgnored(t *testing.T) {
 	}
 }
 
-func TestSyncOnce_StoresPersistentStatus(t *testing.T) {
-	now := time.Now()
+func TestSyncOnce_SelectsEarliestEndingActiveEvent(t *testing.T) {
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
 	tgt := &mockTarget{}
 	cal := &mockCalendarClient{
-		events: []ChangedEvent{
-			{
-				ID:        "e1",
-				Summary:   "Design Review",
-				StartTime: now.Add(-15 * time.Minute),
-				EndTime:   now.Add(45 * time.Minute),
+		body: statusCalendarBody(
+			statusEventSpec{
+				id:        "later",
+				summary:   "Later event",
+				startTime: now.Add(-20 * time.Minute),
+				endTime:   now.Add(60 * time.Minute),
 			},
-		},
+			statusEventSpec{
+				id:        "earlier",
+				summary:   "Earlier event",
+				startTime: now.Add(-10 * time.Minute),
+				endTime:   now.Add(30 * time.Minute),
+			},
+		),
+	}
+	s, _ := newTestSyncer(t, cal, []target.Target{tgt})
+	s.nowFunc = func() time.Time { return now }
+
+	if err := s.syncOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if tgt.status == nil {
+		t.Fatal("expected Sync with non-nil status")
+	}
+	if tgt.status.Text != "Earlier event" {
+		t.Errorf("status text: got %q, want %q", tgt.status.Text, "Earlier event")
+	}
+}
+
+func TestSyncOnce_StoresPersistentStatus(t *testing.T) {
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
+	tgt := &mockTarget{}
+	cal := &mockCalendarClient{
+		body: statusCalendarBody(statusEventSpec{
+			id:        "e1",
+			summary:   "Design Review",
+			startTime: now.Add(-15 * time.Minute),
+			endTime:   now.Add(45 * time.Minute),
+		}),
 	}
 	s, st := newTestSyncer(t, cal, []target.Target{tgt})
+	s.nowFunc = func() time.Time { return now }
 
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -203,6 +267,70 @@ func TestSyncOnce_StoresPersistentStatus(t *testing.T) {
 	}
 }
 
+func TestSyncOnce_UsesCachedRawSnapshotOnFetchError(t *testing.T) {
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
+	body := statusCalendarBody(statusEventSpec{
+		id:        "cached",
+		summary:   "Cached Status",
+		startTime: now.Add(-15 * time.Minute),
+		endTime:   now.Add(45 * time.Minute),
+	})
+	cal := &mockCalendarClient{err: context.DeadlineExceeded}
+	tgt := &mockTarget{}
+	s, st := newTestSyncer(t, cal, []target.Target{tgt})
+	s.nowFunc = func() time.Time { return now }
+	if err := st.SetStatusRawSnapshot(&store.CalendarSnapshot{
+		Body:      string(body),
+		Timezone:  "UTC",
+		FetchedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("SetStatusRawSnapshot: %v", err)
+	}
+
+	if err := s.syncOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if !tgt.synced || tgt.status == nil {
+		t.Fatal("expected target sync from cached raw snapshot")
+	}
+	if tgt.status.Text != "Cached Status" {
+		t.Fatalf("status text: got %q, want %q", tgt.status.Text, "Cached Status")
+	}
+	stored, ok, err := st.GetStatus()
+	if err != nil || !ok {
+		t.Fatalf("status not stored: err=%v ok=%v", err, ok)
+	}
+	if stored.Text != "Cached Status" {
+		t.Fatalf("stored status text: got %q, want %q", stored.Text, "Cached Status")
+	}
+}
+
+func TestSyncOnce_FetchErrorWithoutCachedRawPreservesCurrentStatus(t *testing.T) {
+	cal := &mockCalendarClient{err: context.DeadlineExceeded}
+	tgt := &mockTarget{}
+	s, st := newTestSyncer(t, cal, []target.Target{tgt})
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
+	s.nowFunc = func() time.Time { return now }
+	if err := st.SetStatus(&store.Status{Emoji: ":calendar:", Text: "Old"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.syncOnce(context.Background()); err == nil {
+		t.Fatal("expected syncOnce to fail without cached raw snapshot")
+	}
+	if tgt.synced {
+		t.Fatal("expected target not to sync without fetched or cached data")
+	}
+	stored, ok, err := st.GetStatus()
+	if err != nil || !ok {
+		t.Fatalf("status not stored: err=%v ok=%v", err, ok)
+	}
+	if stored.Text != "Old" {
+		t.Fatalf("stored status changed: got %q, want %q", stored.Text, "Old")
+	}
+}
+
 func TestSyncOnce_DeletesStatusWhenIdle(t *testing.T) {
 	// Seed with a status.
 	st, err := store.New(t.TempDir())
@@ -217,8 +345,10 @@ func TestSyncOnce_DeletesStatusWhenIdle(t *testing.T) {
 
 	// Sync with no active events should delete the status.
 	tgt := &mockTarget{}
-	cal := &mockCalendarClient{events: []ChangedEvent{}}
+	cal := &mockCalendarClient{body: statusCalendarBody()}
 	s := NewSyncer(st, cal, []target.Target{tgt}, zerolog.Nop())
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
+	s.nowFunc = func() time.Time { return now }
 
 	if err := s.syncOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -236,19 +366,18 @@ func TestSyncOnce_DeletesStatusWhenIdle(t *testing.T) {
 // --- Run loop tests ---
 
 func TestRun_SyncsImmediatelyOnStartup(t *testing.T) {
-	now := time.Now()
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
 	cal := &mockCalendarClient{
-		events: []ChangedEvent{
-			{
-				ID:        "e1",
-				Summary:   "Boot Sync",
-				StartTime: now.Add(-10 * time.Minute),
-				EndTime:   now.Add(50 * time.Minute),
-			},
-		},
+		body: statusCalendarBody(statusEventSpec{
+			id:        "e1",
+			summary:   "Boot Sync",
+			startTime: now.Add(-10 * time.Minute),
+			endTime:   now.Add(50 * time.Minute),
+		}),
 	}
 	tgt := &mockTarget{}
 	s, _ := newTestSyncer(t, cal, []target.Target{tgt})
+	s.nowFunc = func() time.Time { return now }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -269,9 +398,11 @@ func TestRun_SyncsImmediatelyOnStartup(t *testing.T) {
 }
 
 func TestRun_ContextCancellationStopsLoop(t *testing.T) {
-	cal := &mockCalendarClient{events: []ChangedEvent{}}
+	cal := &mockCalendarClient{body: statusCalendarBody()}
 	tgt := &mockTarget{}
 	s, _ := newTestSyncer(t, cal, []target.Target{tgt})
+	now := time.Date(2026, 4, 6, 10, 30, 0, 0, time.UTC)
+	s.nowFunc = func() time.Time { return now }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

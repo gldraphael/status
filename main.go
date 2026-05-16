@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -59,10 +60,6 @@ func run(logger zerolog.Logger) error {
 			return fmt.Errorf("validate Cloudflare Pages target config: %w", err)
 		}
 	}
-
-	// Clear any persisted data on startup to ensure a fresh sync from the calendar.
-	// Ignore errors if directory doesn't exist or can't be cleared (e.g., in containers with restricted permissions).
-	_ = os.RemoveAll(cfg.PebblePath)
 
 	st, err := store.New(cfg.PebblePath)
 	if err != nil {
@@ -148,6 +145,9 @@ func registerAvailability(ctx context.Context, cfg config.AvailabilityConfig, st
 	}
 
 	provider := availability.NewProvider(st, availabilityBlocks, workingHours, cfg.Suppressions.ExcludeEnglandBankHolidays)
+	if err := provider.RefreshCurrentFromStoredSnapshot(); err != nil && !errors.Is(err, availability.ErrSnapshotNotFound) {
+		return nil, fmt.Errorf("hydrate availability snapshot: %w", err)
+	}
 	mux.Handle("GET /api/availability", availability.NewHandler(provider, cfg.API.Key, logger))
 	return availability.NewSyncer(st, provider, availabilityClient, logger), nil
 }
