@@ -88,14 +88,56 @@ func NewProvider(st *store.Store, blocks []Block, workingHours WorkingHours, exc
 
 // GetEntries returns current availability entries.
 func (p *Provider) GetEntries() ([]Entry, error) {
-	snap, ok, err := p.store.GetAvailabilitySnapshot()
+	data, err := p.GetEntriesJSON()
 	if err != nil {
-		return nil, fmt.Errorf("get availability snapshot: %w", err)
+		return nil, err
+	}
+	var entries []Entry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil, fmt.Errorf("decode current availability: %w", err)
+	}
+	return entries, nil
+}
+
+// GetEntriesJSON returns current availability entries serialized as JSON.
+func (p *Provider) GetEntriesJSON() ([]byte, error) {
+	data, ok, err := p.store.GetAvailabilityCurrent()
+	if err != nil {
+		return nil, fmt.Errorf("get current availability: %w", err)
 	}
 	if !ok {
 		return nil, ErrSnapshotNotFound
 	}
+	return data, nil
+}
 
+// RefreshCurrentFromStoredSnapshot recomputes and stores the current API
+// response from the latest persisted raw availability snapshot.
+func (p *Provider) RefreshCurrentFromStoredSnapshot() error {
+	snap, ok, err := p.store.GetAvailabilityRawSnapshot()
+	if err != nil {
+		return fmt.Errorf("get availability raw snapshot: %w", err)
+	}
+	if !ok {
+		if err := p.store.ClearAvailabilityCurrent(); err != nil {
+			return fmt.Errorf("clear current availability: %w", err)
+		}
+		return ErrSnapshotNotFound
+	}
+
+	data, err := p.ComputeEntriesJSONFromSnapshot(snap)
+	if err != nil {
+		return err
+	}
+	if err := p.store.SetAvailabilityCurrent(data); err != nil {
+		return fmt.Errorf("store current availability: %w", err)
+	}
+	return nil
+}
+
+// ComputeEntriesJSONFromSnapshot computes the current API response JSON from a
+// raw snapshot. This is intended for sync/startup paths, not request serving.
+func (p *Provider) ComputeEntriesJSONFromSnapshot(snap *store.CalendarSnapshot) ([]byte, error) {
 	opts := ComputeOptions{
 		WorkingHours: p.workingHours,
 		Now:          p.nowFunc(),
@@ -112,12 +154,7 @@ func (p *Provider) GetEntries() ([]Entry, error) {
 		opts.HolidayDates = holidaySnap.Dates
 	}
 
-	return Compute(snap.Body, snap.Timezone, p.blocks, opts)
-}
-
-// GetEntriesJSON returns current availability entries serialized as JSON.
-func (p *Provider) GetEntriesJSON() ([]byte, error) {
-	entries, err := p.GetEntries()
+	entries, err := Compute(snap.Body, snap.Timezone, p.blocks, opts)
 	if err != nil {
 		return nil, err
 	}

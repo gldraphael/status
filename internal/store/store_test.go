@@ -67,10 +67,10 @@ func TestStatus_SetGetDelete(t *testing.T) {
 	}
 }
 
-func TestAvailabilitySnapshot_SetGet(t *testing.T) {
+func TestStatusRawSnapshot_SetGet(t *testing.T) {
 	st := newTestStore(t)
 
-	_, ok, err := st.GetAvailabilitySnapshot()
+	_, ok, err := st.GetStatusRawSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,16 +78,101 @@ func TestAvailabilitySnapshot_SetGet(t *testing.T) {
 		t.Fatal("expected not found before set")
 	}
 
-	want := &store.AvailabilitySnapshot{
+	want := &store.CalendarSnapshot{
 		Body:      "BEGIN:VCALENDAR\nEND:VCALENDAR",
 		Timezone:  "Europe/London",
 		FetchedAt: time.Now().Truncate(time.Millisecond),
 	}
-	if err := st.SetAvailabilitySnapshot(want); err != nil {
+	if err := st.SetStatusRawSnapshot(want); err != nil {
 		t.Fatal(err)
 	}
 
-	got, ok, err := st.GetAvailabilitySnapshot()
+	got, ok, err := st.GetStatusRawSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected found after set")
+	}
+	if got.Body != want.Body || got.Timezone != want.Timezone {
+		t.Errorf("status raw snapshot mismatch: got %+v, want %+v", got, want)
+	}
+}
+
+func TestStatusProjection_Replace(t *testing.T) {
+	st := newTestStore(t)
+	now := time.Now().Truncate(time.Millisecond)
+	raw := &store.CalendarSnapshot{
+		Body:      "BEGIN:VCALENDAR\nEND:VCALENDAR",
+		Timezone:  "Europe/London",
+		FetchedAt: now,
+	}
+	current := &store.Status{
+		Emoji:      ":calendar:",
+		Text:       "Team meeting",
+		Expiration: now.Add(30 * time.Minute),
+	}
+
+	if err := st.ReplaceStatusProjection(raw, current); err != nil {
+		t.Fatal(err)
+	}
+
+	gotRaw, ok, err := st.GetStatusRawSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected status raw snapshot after replace")
+	}
+	if gotRaw.Body != raw.Body || gotRaw.Timezone != raw.Timezone {
+		t.Fatalf("unexpected status raw snapshot: %+v", gotRaw)
+	}
+
+	gotStatus, ok, err := st.GetStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected current status after replace")
+	}
+	if gotStatus.Text != current.Text {
+		t.Fatalf("status text: got %q, want %q", gotStatus.Text, current.Text)
+	}
+
+	raw.Body = "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR"
+	if err := st.ReplaceStatusProjection(raw, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, ok, err = st.GetStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected current status to be deleted")
+	}
+}
+
+func TestAvailabilityRawSnapshot_SetGet(t *testing.T) {
+	st := newTestStore(t)
+
+	_, ok, err := st.GetAvailabilityRawSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected not found before set")
+	}
+
+	want := &store.CalendarSnapshot{
+		Body:      "BEGIN:VCALENDAR\nEND:VCALENDAR",
+		Timezone:  "Europe/London",
+		FetchedAt: time.Now().Truncate(time.Millisecond),
+	}
+	if err := st.SetAvailabilityRawSnapshot(want); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := st.GetAvailabilityRawSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,15 +185,90 @@ func TestAvailabilitySnapshot_SetGet(t *testing.T) {
 
 	want.Body = "BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR"
 	want.Timezone = "UTC"
-	if err := st.SetAvailabilitySnapshot(want); err != nil {
+	if err := st.SetAvailabilityRawSnapshot(want); err != nil {
 		t.Fatal(err)
 	}
-	got, _, err = st.GetAvailabilitySnapshot()
+	got, _, err = st.GetAvailabilityRawSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Timezone != "UTC" {
 		t.Errorf("expected overwrite to update timezone, got %+v", got)
+	}
+}
+
+func TestAvailabilityCurrent_SetGetClear(t *testing.T) {
+	st := newTestStore(t)
+
+	_, ok, err := st.GetAvailabilityCurrent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected current availability not found before set")
+	}
+
+	current := []byte(`[{"day_of_week":"Monday","block":"Morning","date":"2026-04-06"}]`)
+	if err := st.SetAvailabilityCurrent(current); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok, err := st.GetAvailabilityCurrent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected current availability after set")
+	}
+	if string(got) != string(current) {
+		t.Fatalf("current availability mismatch: got %s, want %s", got, current)
+	}
+
+	if err := st.ClearAvailabilityCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	_, ok, err = st.GetAvailabilityCurrent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected current availability to be cleared")
+	}
+}
+
+func TestAvailabilityProjection_Replace(t *testing.T) {
+	st := newTestStore(t)
+	raw := &store.CalendarSnapshot{
+		Body:      "BEGIN:VCALENDAR\nEND:VCALENDAR",
+		Timezone:  "Europe/London",
+		FetchedAt: time.Now().UTC().Truncate(time.Millisecond),
+	}
+	current := []byte(`[{"date":"2026-04-06","block":"Morning"}]`)
+
+	if err := st.ReplaceAvailabilityProjection(raw, current); err != nil {
+		t.Fatal(err)
+	}
+
+	gotRaw, ok, err := st.GetAvailabilityRawSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected availability raw snapshot")
+	}
+	if gotRaw.Body != raw.Body || gotRaw.Timezone != raw.Timezone {
+		t.Fatalf("unexpected raw snapshot: %+v", gotRaw)
+	}
+
+	gotCurrent, ok, err := st.GetAvailabilityCurrent()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected current availability")
+	}
+	if string(gotCurrent) != string(current) {
+		t.Fatalf("current availability mismatch: got %s, want %s", gotCurrent, current)
 	}
 }
 
@@ -207,142 +367,26 @@ func TestAvailabilityDeploymentState_SetGetClear(t *testing.T) {
 	if ok {
 		t.Fatal("expected dirty state to be cleared")
 	}
-}
 
-func TestEvent_SetGet(t *testing.T) {
-	st := newTestStore(t)
-
-	_, ok, err := st.GetEvent("evt1")
+	dirty = []byte(`[{"date":"2026-04-07","block":"Afternoon"}]`)
+	if err := st.SetAvailabilityDirty(dirty); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkAvailabilityDeployed(dirty); err != nil {
+		t.Fatal(err)
+	}
+	last, ok, err = st.GetLastDeployedAvailability()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || string(last) != string(dirty) {
+		t.Fatalf("last deployed mismatch after mark deployed: got %s ok=%v", last, ok)
+	}
+	_, ok, err = st.GetAvailabilityDirty()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ok {
-		t.Fatal("expected not found before set")
-	}
-
-	want := &store.Event{
-		ID:        "evt1",
-		Summary:   "Team meeting",
-		StartTime: time.Now().Add(-30 * time.Minute).Truncate(time.Millisecond),
-		EndTime:   time.Now().Add(30 * time.Minute).Truncate(time.Millisecond),
-		Cancelled: false,
-	}
-	if err := st.SetEvent(want); err != nil {
-		t.Fatal(err)
-	}
-
-	got, ok, err := st.GetEvent("evt1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("expected found after set")
-	}
-	if got.ID != want.ID || got.Summary != want.Summary || got.Cancelled != want.Cancelled {
-		t.Errorf("event mismatch: got %+v, want %+v", got, want)
-	}
-
-	// Overwrite: mark as cancelled.
-	want.Cancelled = true
-	if err := st.SetEvent(want); err != nil {
-		t.Fatal(err)
-	}
-	got, _, err = st.GetEvent("evt1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !got.Cancelled {
-		t.Error("expected event to be cancelled after update")
-	}
-}
-
-func TestListActiveEvents(t *testing.T) {
-	st := newTestStore(t)
-	now := time.Now()
-
-	tests := []struct {
-		ev     store.Event
-		active bool // expected to appear in active events at `now`
-	}{
-		{
-			ev: store.Event{
-				ID: "past", Summary: "Past meeting",
-				StartTime: now.Add(-2 * time.Hour), EndTime: now.Add(-time.Hour),
-			},
-			active: false,
-		},
-		{
-			ev: store.Event{
-				ID: "current", Summary: "Current meeting",
-				StartTime: now.Add(-30 * time.Minute), EndTime: now.Add(30 * time.Minute),
-			},
-			active: true,
-		},
-		{
-			ev: store.Event{
-				ID: "future", Summary: "Future meeting",
-				StartTime: now.Add(time.Hour), EndTime: now.Add(2 * time.Hour),
-			},
-			active: false,
-		},
-		{
-			// Cancelled events should never be active.
-			ev: store.Event{
-				ID: "cancelled", Summary: "Cancelled meeting",
-				StartTime: now.Add(-30 * time.Minute), EndTime: now.Add(30 * time.Minute),
-				Cancelled: true,
-			},
-			active: false,
-		},
-		{
-			// Event that starts exactly now is active.
-			ev: store.Event{
-				ID: "starts-now", Summary: "Starts now",
-				StartTime: now, EndTime: now.Add(time.Hour),
-			},
-			active: true,
-		},
-		{
-			// Multi-day event.
-			ev: store.Event{
-				ID: "multi-day", Summary: "Multi-day workshop",
-				StartTime: now.Add(-24 * time.Hour), EndTime: now.Add(24 * time.Hour),
-			},
-			active: true,
-		},
-	}
-
-	for i := range tests {
-		if err := st.SetEvent(&tests[i].ev); err != nil {
-			t.Fatalf("set event %q: %v", tests[i].ev.ID, err)
-		}
-	}
-
-	active, err := st.ListActiveEvents(now)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	activeIDs := make(map[string]bool, len(active))
-	for _, ev := range active {
-		activeIDs[ev.ID] = true
-	}
-
-	for _, tc := range tests {
-		got := activeIDs[tc.ev.ID]
-		if got != tc.active {
-			t.Errorf("event %q: active=%v, want active=%v", tc.ev.ID, got, tc.active)
-		}
-	}
-}
-
-func TestListActiveEvents_Empty(t *testing.T) {
-	st := newTestStore(t)
-	active, err := st.ListActiveEvents(time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(active) != 0 {
-		t.Errorf("expected 0 active events, got %d", len(active))
+		t.Fatal("expected dirty state to be cleared after mark deployed")
 	}
 }

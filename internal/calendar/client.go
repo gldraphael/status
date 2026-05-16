@@ -35,13 +35,21 @@ type ChangedEvent struct {
 	Cancelled bool
 }
 
-// FetchEvents fetches all events from the iCal URL.
-func (c *Client) FetchEvents(ctx context.Context) ([]ChangedEvent, error) {
+// Fetch fetches the raw iCal body from the configured URL.
+func (c *Client) Fetch(ctx context.Context) ([]byte, error) {
 	body, err := c.feed.Fetch(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("fetch calendar: %w", err)
 	}
+	return body, nil
+}
 
+// FetchEvents fetches and parses events from the iCal URL.
+func (c *Client) FetchEvents(ctx context.Context) ([]ChangedEvent, error) {
+	body, err := c.Fetch(ctx)
+	if err != nil {
+		return nil, err
+	}
 	now := c.nowFunc()
 	parsed, err := ParseICalendar(body, now.Add(-24*time.Hour), now.Add(24*time.Hour))
 	if err != nil {

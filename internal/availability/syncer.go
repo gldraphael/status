@@ -51,29 +51,45 @@ func (s *Syncer) Run(ctx context.Context, interval time.Duration) error {
 }
 
 func (s *Syncer) syncOnce(ctx context.Context) error {
+	var snap *store.CalendarSnapshot
+	fetched := false
+
 	body, err := s.cal.Fetch(ctx)
 	if err != nil {
 		s.logger.Error().Err(err).Msg("fetch availability calendar failed; using cached snapshot if available")
+		cached, ok, err := s.store.GetAvailabilityRawSnapshot()
+		if err != nil {
+			return fmt.Errorf("get cached availability raw snapshot: %w", err)
+		}
+		if !ok {
+			return ErrSnapshotNotFound
+		}
+		snap = cached
 	} else {
 		timezone, err := calendar.ExtractICalendarTimezone(body)
 		if err != nil {
 			return fmt.Errorf("extract availability timezone: %w", err)
 		}
 
-		snap := &store.AvailabilitySnapshot{
+		snap = &store.CalendarSnapshot{
 			Body:      string(body),
 			Timezone:  timezone,
 			FetchedAt: s.nowFunc().UTC(),
 		}
-		if err := s.store.SetAvailabilitySnapshot(snap); err != nil {
-			return fmt.Errorf("store availability snapshot: %w", err)
-		}
+		fetched = true
 	}
 
 	// Change detection: compare current entries with last deployed ones.
-	currentEntries, err := s.provider.GetEntriesJSON()
+	currentEntries, err := s.provider.ComputeEntriesJSONFromSnapshot(snap)
 	if err != nil {
 		return fmt.Errorf("compute current availability: %w", err)
+	}
+	if fetched {
+		if err := s.store.ReplaceAvailabilityProjection(snap, currentEntries); err != nil {
+			return fmt.Errorf("store availability projection: %w", err)
+		}
+	} else if err := s.store.SetAvailabilityCurrent(currentEntries); err != nil {
+		return fmt.Errorf("store current availability: %w", err)
 	}
 
 	lastDeployed, ok, err := s.store.GetLastDeployedAvailability()
