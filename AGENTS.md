@@ -5,7 +5,7 @@ This repository is a Go service that syncs calendar status and exposes availabil
 ## Project Overview
 - Personal app for syncing calendar-driven status to GitHub.
 - Status sync fans out to enabled targets rather than being tied to GitHub alone.
-- Optional availability API reads a separate calendar, applies weekday `working_hours.start/end`, and returns the first free block per day for the next 10 days.
+- Optional availability API reads a separate calendar, applies weekday `suppressions.working_hours.start/end`, and returns the first free block per day for the next 10 days.
 - Both features are polling-based and use Pebble for persistence.
 - Pebble stores status and snapshots so lookups stay O(1) for the hot path.
 - The config is organized by top-level `status` and `availability` domains, each with nested `sources` and `targets` where applicable.
@@ -23,9 +23,9 @@ This repository is a Go service that syncs calendar status and exposes availabil
 ## Sync Flow
 - Status sync is enabled only when at least one `status.targets` entry is configured; it fetches `status.sources.ical.url`, stores events, computes the current active event, and syncs enabled targets on `status.sources.ical.interval`.
 - Availability sync is enabled when `availability.api.is_enabled` or an `availability.targets` entry is enabled; it fetches `availability.sources.ical.url` on `availability.sources.ical.interval` and stores the raw ICS body plus timezone metadata in Pebble.
-- If `availability.exclude_england_bank_holidays` is enabled, the app fetches GOV.UK bank holidays once at startup and stores the parsed holiday dates locally.
+- If `availability.suppressions.exclude_england_bank_holidays` is enabled, the app fetches GOV.UK bank holidays once at startup and stores the parsed holiday dates locally.
 - That startup seed is required for the availability endpoint when holiday exclusion is enabled, so startup should fail if the holiday feed cannot be read or parsed.
-- Weekday availability uses `availability.working_hours.start/end` as a suppression window; if `availability.exclude_england_bank_holidays` is enabled, that suppression is lifted on England-and-Wales bank holidays from GOV.UK.
+- Weekday availability uses `availability.suppressions.working_hours.start/end` as a suppression window; if `availability.suppressions.exclude_england_bank_holidays` is enabled, that suppression is lifted on England-and-Wales bank holidays from GOV.UK.
 - `/api/availability` is only registered when `availability.api.is_enabled` is true.
 - The availability handler requires an exact `Authorization` header match with `availability.api.key`.
 
@@ -40,7 +40,7 @@ This repository is a Go service that syncs calendar status and exposes availabil
 - Status calendar URL and availability calendar URL are separate config values: `status.sources.ical.url` and `availability.sources.ical.url`.
 - Status and availability fetch intervals are separate config values and default to `5m`.
 - Time blocks come from config and are checked in order.
-- `availability.working_hours.start` defaults to `09:00` and `availability.working_hours.end` defaults to `17:50`; together they are treated as weekday working time, not as an availability block.
+- `availability.suppressions.working_hours.start` defaults to `09:00` and `availability.suppressions.working_hours.end` defaults to `17:50`; together they are treated as weekday working time, not as an availability block.
 - Availability data is stored as the fetched raw ICS body plus metadata, not as live network state.
 - When enabled, bank holiday data is fetched from `https://www.gov.uk/bank-holidays.json` at startup and cached in Pebble.
 - The availability route is disabled when `availability.api.is_enabled` is false.

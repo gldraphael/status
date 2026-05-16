@@ -20,8 +20,8 @@ status calendar fetch interval is configured with
 
 Set `AVAILABILITY_API_IS_ENABLED=true` to expose `/api/availability` from a separate calendar feed.
 
-- `AVAILABILITY_WORKING_HOURS_START` defaults to `09:00` and `AVAILABILITY_WORKING_HOURS_END` defaults to `17:50`; weekday blocks that overlap that window are suppressed unless the day is a bank holiday.
-- Set `AVAILABILITY_EXCLUDE_ENGLAND_BANK_HOLIDAYS=true` to lift that weekday suppression on England-and-Wales bank holidays from GOV.UK. Holiday data is fetched at startup and cached in Pebble.
+- `AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START` defaults to `09:00` and `AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_END` defaults to `17:50`; weekday blocks that overlap that window are suppressed unless the day is a bank holiday.
+- Set `AVAILABILITY_SUPPRESSIONS_EXCLUDE_ENGLAND_BANK_HOLIDAYS=true` to lift that weekday suppression on England-and-Wales bank holidays from GOV.UK. Holiday data is fetched at startup and cached in Pebble.
 - `AVAILABILITY_SOURCES_ICAL_URL` controls the availability feed, and `AVAILABILITY_API_KEY` controls the exact `Authorization` header required by the endpoint.
 - `AVAILABILITY_SOURCES_ICAL_INTERVAL` / `availability.sources.ical.interval` controls the availability calendar fetch interval, defaulting to `5m`.
 
