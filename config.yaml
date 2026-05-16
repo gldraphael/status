@@ -1,41 +1,42 @@
 port: 8080
 pebble_path: ./data
 
+# The status feature fetches events from an iCal calendar
+# and updates GitHub status accordingly
 status:
+  enabled: true
   sources:
     ical:
-      # iCal URL for your status calendar (required when a status target is enabled).
       url: https://example.com/status.ics
-      # Status calendar fetch interval.
       interval: 5m
   targets:
     github:
-      # GitHub personal access token (optional, enables GitHub status sync).
+      # GitHub personal access token required when status is enabled.
       # Scopes required: user scope for status updates.
       # token: ghp_xyz
       token: ""
 
+# The availability feature fetches events from an iCal calendar, 
+# infers my availability based on the events & the following configuration,
+# expoes the availability via an API used by my static website during build,
+# and automatically triggers a redeployment of my website when availability changes.
 availability:
+  enabled: false
   sources:
     ical:
-      # Separate iCal URL for availability data.
       url: https://example.com/availability.ics
-      # Availability calendar fetch interval.
       interval: 5m
 
   api:
-    # Disabled by default. Set to true to expose /api/availability.
-    is_enabled: false
-    # Exact Authorization header value required by /api/availability.
+    # Exact Authorization header value required by /api/availability when availability is enabled.
     key: ""
 
   targets:
     cloudflare_pages:
-      # Disabled by default. Set to true to trigger Cloudflare Pages deploys when availability changes.
-      is_enabled: false
       # Deploy checks are aligned to HH:01, HH:11, HH:21, ... when interval is 10m.
       interval: 10m
-      # Cloudflare Pages build hook URL. Prefer AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK for secrets.
+      # Cloudflare Pages build hook URL required when availability is enabled.
+      # Prefer AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK for secrets.
       deploy_hook: ""
 
   suppressions:

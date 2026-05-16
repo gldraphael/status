@@ -25,8 +25,9 @@ type Config struct {
 
 // StatusConfig configures status sources and targets.
 type StatusConfig struct {
-	Sources StatusSourcesConfig `koanf:"sources"`
-	Targets StatusTargetsConfig `koanf:"targets"`
+	IsEnabled bool                `koanf:"enabled"`
+	Sources   StatusSourcesConfig `koanf:"sources"`
+	Targets   StatusTargetsConfig `koanf:"targets"`
 }
 
 // StatusSourcesConfig configures status data sources.
@@ -64,6 +65,7 @@ func (t StatusTargetsConfig) Enabled() bool {
 
 // AvailabilityConfig configures availability sources, serving, targets, and rules.
 type AvailabilityConfig struct {
+	IsEnabled    bool                           `koanf:"enabled"`
 	Sources      AvailabilitySourcesConfig      `koanf:"sources"`
 	API          AvailabilityAPIConfig          `koanf:"api"`
 	Targets      AvailabilityTargetsConfig      `koanf:"targets"`
@@ -76,10 +78,9 @@ type AvailabilitySourcesConfig struct {
 	ICal ICalSourceConfig `koanf:"ical"`
 }
 
-// AvailabilityAPIConfig configures the optional availability HTTP API.
+// AvailabilityAPIConfig configures the availability HTTP API.
 type AvailabilityAPIConfig struct {
-	IsEnabled bool   `koanf:"is_enabled"`
-	Key       string `koanf:"key"`
+	Key string `koanf:"key"`
 }
 
 // AvailabilityTargetsConfig holds availability publish targets.
@@ -89,24 +90,18 @@ type AvailabilityTargetsConfig struct {
 
 // CloudflarePagesTargetConfig configures Cloudflare Pages build hook publishes.
 type CloudflarePagesTargetConfig struct {
-	IsEnabled  bool   `koanf:"is_enabled"`
 	Interval   string `koanf:"interval"`
 	DeployHook string `koanf:"deploy_hook"`
 }
 
-// Enabled reports whether the Cloudflare Pages target is configured.
-func (c CloudflarePagesTargetConfig) Enabled() bool {
-	return c.IsEnabled
-}
-
-// Enabled reports whether any availability target is configured.
-func (t AvailabilityTargetsConfig) Enabled() bool {
-	return t.CloudflarePages.Enabled()
+// Enabled reports whether status sync is enabled.
+func (s StatusConfig) Enabled() bool {
+	return s.IsEnabled
 }
 
 // Enabled reports whether availability computation is needed.
 func (a AvailabilityConfig) Enabled() bool {
-	return a.API.IsEnabled || a.Targets.Enabled()
+	return a.IsEnabled
 }
 
 // AvailabilitySuppressionsConfig configures availability suppression rules.
@@ -133,17 +128,17 @@ type AvailabilityBlockConfig struct {
 var envMapping = map[string]string{
 	"PORT":                                                    "port",
 	"PEBBLE_PATH":                                             "pebble_path",
+	"STATUS_ENABLED":                                          "status.enabled",
 	"STATUS_SOURCES_ICAL_URL":                                 "status.sources.ical.url",
 	"STATUS_SOURCES_ICAL_INTERVAL":                            "status.sources.ical.interval",
 	"STATUS_TARGETS_GITHUB_TOKEN":                             "status.targets.github.token",
+	"AVAILABILITY_ENABLED":                                    "availability.enabled",
 	"AVAILABILITY_SOURCES_ICAL_URL":                           "availability.sources.ical.url",
 	"AVAILABILITY_SOURCES_ICAL_INTERVAL":                      "availability.sources.ical.interval",
-	"AVAILABILITY_API_IS_ENABLED":                             "availability.api.is_enabled",
 	"AVAILABILITY_API_KEY":                                    "availability.api.key",
 	"AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START":           "availability.suppressions.working_hours.start",
 	"AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_END":             "availability.suppressions.working_hours.end",
 	"AVAILABILITY_SUPPRESSIONS_EXCLUDE_ENGLAND_BANK_HOLIDAYS": "availability.suppressions.exclude_england_bank_holidays",
-	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_IS_ENABLED":        "availability.targets.cloudflare_pages.is_enabled",
 	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_INTERVAL":          "availability.targets.cloudflare_pages.interval",
 	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK":       "availability.targets.cloudflare_pages.deploy_hook",
 }
@@ -163,13 +158,13 @@ func Load() (*Config, error) {
 	if err := k.Load(confmap.Provider(map[string]interface{}{
 		"port":                               8080,
 		"pebble_path":                        "./data",
+		"status.enabled":                     false,
 		"status.sources.ical.interval":       "5m",
+		"availability.enabled":               false,
 		"availability.sources.ical.interval": "5m",
 		"availability.suppressions.working_hours.start":           "09:00",
 		"availability.suppressions.working_hours.end":             "17:50",
 		"availability.suppressions.exclude_england_bank_holidays": false,
-		"availability.api.is_enabled":                             false,
-		"availability.targets.cloudflare_pages.is_enabled":        false,
 		"availability.targets.cloudflare_pages.interval":          "10m",
 	}, "."), nil); err != nil {
 		return nil, fmt.Errorf("load defaults: %w", err)
@@ -213,14 +208,17 @@ func (c Config) Validate() error {
 
 // Validate checks status source and target settings.
 func (s StatusConfig) Validate() error {
-	if !s.Targets.Enabled() {
+	if !s.Enabled() {
 		return nil
 	}
 	if strings.TrimSpace(s.Sources.ICal.URL) == "" {
-		return fmt.Errorf("status.sources.ical.url is required when at least one status target is enabled")
+		return fmt.Errorf("status.sources.ical.url is required when status is enabled")
 	}
 	if _, err := s.Sources.ICal.IntervalDuration("status.sources.ical.interval"); err != nil {
 		return err
+	}
+	if !s.Targets.Enabled() {
+		return fmt.Errorf("at least one status target is required when status is enabled")
 	}
 	return nil
 }
@@ -251,8 +249,8 @@ func (a AvailabilityConfig) Validate() error {
 	if _, err := a.Sources.ICal.IntervalDuration("availability.sources.ical.interval"); err != nil {
 		return err
 	}
-	if a.API.IsEnabled && strings.TrimSpace(a.API.Key) == "" {
-		return fmt.Errorf("availability.api.key is required when availability API is enabled")
+	if strings.TrimSpace(a.API.Key) == "" {
+		return fmt.Errorf("availability.api.key is required when availability is enabled")
 	}
 	if a.Suppressions.WorkingHours.Start == "" {
 		return fmt.Errorf("availability.suppressions.working_hours.start is required when availability is enabled")
@@ -288,25 +286,19 @@ func (a AvailabilityConfig) Validate() error {
 
 // Validate checks the Cloudflare Pages target settings.
 func (c CloudflarePagesTargetConfig) Validate() error {
-	if !c.IsEnabled {
-		return nil
-	}
 	if _, err := c.IntervalDuration(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(c.DeployHook) == "" {
-		return fmt.Errorf("availability.targets.cloudflare_pages.deploy_hook is required when Cloudflare Pages target is enabled")
+		return fmt.Errorf("availability.targets.cloudflare_pages.deploy_hook is required when availability is enabled")
 	}
 	return nil
 }
 
 // IntervalDuration returns the validated Cloudflare Pages publish interval.
 func (c CloudflarePagesTargetConfig) IntervalDuration() (time.Duration, error) {
-	if !c.IsEnabled {
-		return 0, nil
-	}
 	if strings.TrimSpace(c.Interval) == "" {
-		return 0, fmt.Errorf("availability.targets.cloudflare_pages.interval is required when Cloudflare Pages target is enabled")
+		return 0, fmt.Errorf("availability.targets.cloudflare_pages.interval is required when availability is enabled")
 	}
 	dur, err := time.ParseDuration(c.Interval)
 	if err != nil {

@@ -39,7 +39,7 @@ func run(logger zerolog.Logger) error {
 		return fmt.Errorf("validate config: %w", err)
 	}
 	var statusInterval time.Duration
-	if cfg.Status.Targets.Enabled() {
+	if cfg.Status.Enabled() {
 		statusInterval, err = cfg.Status.Sources.ICal.IntervalDuration("status.sources.ical.interval")
 		if err != nil {
 			return fmt.Errorf("validate status source config: %w", err)
@@ -52,9 +52,12 @@ func run(logger zerolog.Logger) error {
 			return fmt.Errorf("validate availability source config: %w", err)
 		}
 	}
-	cloudflarePagesInterval, err := cfg.Availability.Targets.CloudflarePages.IntervalDuration()
-	if err != nil {
-		return fmt.Errorf("validate Cloudflare Pages target config: %w", err)
+	var cloudflarePagesInterval time.Duration
+	if cfg.Availability.Enabled() {
+		cloudflarePagesInterval, err = cfg.Availability.Targets.CloudflarePages.IntervalDuration()
+		if err != nil {
+			return fmt.Errorf("validate Cloudflare Pages target config: %w", err)
+		}
 	}
 
 	// Clear any persisted data on startup to ensure a fresh sync from the calendar.
@@ -70,9 +73,9 @@ func run(logger zerolog.Logger) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	targets := buildTargets(cfg.Status.Targets)
 	var statusSyncer *calendar.Syncer
-	if len(targets) > 0 {
+	if cfg.Status.Enabled() {
+		targets := buildTargets(cfg.Status.Targets)
 		calClient, err := calendar.NewClient(cfg.Status.Sources.ICal.URL)
 		if err != nil {
 			return fmt.Errorf("create status calendar client: %w", err)
@@ -108,7 +111,9 @@ func run(logger zerolog.Logger) error {
 	}
 
 	// Start deploy loop if enabled.
-	startDeployLoop(ctx, cfg.Availability.Targets.CloudflarePages, cloudflarePagesInterval, st, logger)
+	if cfg.Availability.Enabled() {
+		startDeployLoop(ctx, cfg.Availability.Targets.CloudflarePages, cloudflarePagesInterval, st, logger)
+	}
 
 	srv := server.New(cfg.Port, mux, logger)
 	return srv.Start(ctx)
@@ -143,9 +148,7 @@ func registerAvailability(ctx context.Context, cfg config.AvailabilityConfig, st
 	}
 
 	provider := availability.NewProvider(st, availabilityBlocks, workingHours, cfg.Suppressions.ExcludeEnglandBankHolidays)
-	if cfg.API.IsEnabled {
-		mux.Handle("GET /api/availability", availability.NewHandler(provider, cfg.API.Key, logger))
-	}
+	mux.Handle("GET /api/availability", availability.NewHandler(provider, cfg.API.Key, logger))
 	return availability.NewSyncer(st, provider, availabilityClient, logger), nil
 }
 
@@ -162,10 +165,6 @@ func parseAvailabilityBlocks(blocks []config.AvailabilityBlockConfig) ([]availab
 }
 
 func startDeployLoop(ctx context.Context, cfg config.CloudflarePagesTargetConfig, interval time.Duration, st *store.Store, logger zerolog.Logger) {
-	if !cfg.IsEnabled {
-		return
-	}
-
 	client := deploy.NewHookClient(cfg.DeployHook)
 	deployer := deploy.NewDeployer(client, st, logger)
 	go func() {

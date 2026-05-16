@@ -4,8 +4,8 @@ This repository is a Go service that syncs calendar status and exposes availabil
 
 ## Project Overview
 - Personal app for syncing calendar-driven status to GitHub.
-- Status sync fans out to enabled targets rather than being tied to GitHub alone.
-- Optional availability API reads a separate calendar, applies weekday `suppressions.working_hours.start/end`, and returns the first free block per day for the next 10 days.
+- Status sync fans out to configured targets rather than being tied to GitHub alone.
+- Optional availability feature reads a separate calendar, applies weekday `suppressions.working_hours.start/end`, and returns the first free block per day for the next 10 days through its API.
 - Both features are polling-based and use Pebble for persistence.
 - Pebble stores status and snapshots so lookups stay O(1) for the hot path.
 - The config is organized by top-level `status` and `availability` domains, each with nested `sources` and `targets` where applicable.
@@ -21,12 +21,13 @@ This repository is a Go service that syncs calendar status and exposes availabil
 - `internal/config` loads defaults, `config.yaml`, and environment variables.
 
 ## Sync Flow
-- Status sync is enabled only when at least one `status.targets` entry is configured; it fetches `status.sources.ical.url`, stores events, computes the current active event, and syncs enabled targets on `status.sources.ical.interval`.
-- Availability sync is enabled when `availability.api.is_enabled` or an `availability.targets` entry is enabled; it fetches `availability.sources.ical.url` on `availability.sources.ical.interval` and stores the raw ICS body plus timezone metadata in Pebble.
+- Status sync is enabled only when `status.enabled` is true; it fetches `status.sources.ical.url`, stores events, computes the current active event, and syncs configured targets on `status.sources.ical.interval`.
+- Availability sync is enabled only when `availability.enabled` is true; it fetches `availability.sources.ical.url` on `availability.sources.ical.interval`, stores the raw ICS body plus timezone metadata in Pebble, exposes the API, and starts availability targets.
+- If a feature-level `enabled` flag is false, both fetching and publishing for that feature must stay disabled regardless of nested configuration.
 - If `availability.suppressions.exclude_england_bank_holidays` is enabled, the app fetches GOV.UK bank holidays once at startup and stores the parsed holiday dates locally.
 - That startup seed is required for the availability endpoint when holiday exclusion is enabled, so startup should fail if the holiday feed cannot be read or parsed.
 - Weekday availability uses `availability.suppressions.working_hours.start/end` as a suppression window; if `availability.suppressions.exclude_england_bank_holidays` is enabled, that suppression is lifted on England-and-Wales bank holidays from GOV.UK.
-- `/api/availability` is only registered when `availability.api.is_enabled` is true.
+- `/api/availability` is only registered when `availability.enabled` is true.
 - The availability handler requires an exact `Authorization` header match with `availability.api.key`.
 
 ## Build, Test & Lint
@@ -43,7 +44,7 @@ This repository is a Go service that syncs calendar status and exposes availabil
 - `availability.suppressions.working_hours.start` defaults to `09:00` and `availability.suppressions.working_hours.end` defaults to `17:50`; together they are treated as weekday working time, not as an availability block.
 - Availability data is stored as the fetched raw ICS body plus metadata, not as live network state.
 - When enabled, bank holiday data is fetched from `https://www.gov.uk/bank-holidays.json` at startup and cached in Pebble.
-- The availability route is disabled when `availability.api.is_enabled` is false.
+- The availability route is disabled when `availability.enabled` is false.
 - Empty env vars are treated as unset.
 - Pebble key design includes:
   - `status` for the current status record
@@ -56,8 +57,8 @@ This repository is a Go service that syncs calendar status and exposes availabil
 - The holiday snapshot stores the raw GOV.UK JSON body, parsed dates, and fetch timestamp so availability can be computed offline.
 - Status is single-tenant.
 - Time zone handling should use the feed timezone when available, with UTC fallback.
-- If at least one status target is enabled, `status.sources.ical.url` is required; otherwise availability can run without a status calendar.
-- If availability API or availability targets are enabled, `availability.sources.ical.url` and availability blocks are required.
+- If `status.enabled` is true, `status.sources.ical.url` and at least one status target are required; otherwise availability can run without a status calendar.
+- If `availability.enabled` is true, `availability.sources.ical.url`, availability blocks, `availability.api.key`, and `availability.targets.cloudflare_pages.deploy_hook` are required.
 
 ## Adding a New Status Target
 - Add a target under `internal/{platform}` implementing `target.Target`.
@@ -71,13 +72,13 @@ This repository is a Go service that syncs calendar status and exposes availabil
 - Cancelled events are stored but do not count as active.
 - Availability computation checks today plus the next 9 days and returns the first free configured block per day.
 - On weekdays, blocks that overlap working hours are suppressed unless the day is a bank holiday and holiday exclusion is enabled.
-- If availability API or availability targets are enabled but availability config is incomplete, startup should fail fast.
+- If `availability.enabled` is true but availability config is incomplete, startup should fail fast.
 - The app is designed for a single user; multi-user support would require key design changes.
 
 ## Cloudflare Pages auto-deploy
 
-- Feature: When enabled, the application triggers a Cloudflare Pages deployment at a regular interval.
+- Feature: When `availability.enabled` is true, the application triggers a Cloudflare Pages deployment at a regular interval.
 - Change Tracking: To save build minutes, deployments are only triggered if the availability calendar has changed since the last successful deployment. This is managed by the `availability.Syncer`, which compares the current computed availability JSON with the `availability_last_deployed` JSON in Pebble. If a change is detected (including time-based changes), the new JSON is stored in `availability_dirty`, signaling the `Deployer` to trigger a build.
-- Config keys: `availability.targets.cloudflare_pages.is_enabled` (bool), `availability.targets.cloudflare_pages.interval` (Go duration string, e.g., "10m"), `availability.targets.cloudflare_pages.deploy_hook` (Pages Build Hook URL).
+- Config keys: `availability.enabled` (bool), `availability.targets.cloudflare_pages.interval` (Go duration string, e.g., "10m"), `availability.targets.cloudflare_pages.deploy_hook` (Pages Build Hook URL).
 - Scheduling: Deploys are scheduled to always fall offset by one minute after the hour. Example: with `availability.targets.cloudflare_pages.interval = 10m` deploys occur at HH:01, HH:11, HH:21, ... This reduces the chance of publishing stale calendar events that commonly start at round minutes (e.g., HH:20, HH:30).
 - Security: Do not commit `availability.targets.cloudflare_pages.deploy_hook` into source control; provide it via `config.yaml` or the `AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK` environment variable.
