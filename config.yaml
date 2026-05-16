@@ -1,29 +1,49 @@
 port: 8080
 pebble_path: ./data
 
-# iCal URL for your calendar (required)
-calendar_url: https://example.com/calendar.ics
-
-targets:
-  github:
-    # GitHub personal access token (optional, enables GitHub status sync)
-    # Scopes required: user scope for status updates
-    # token: ghp_xyz
-    token: ""
+status:
+  sources:
+    ical:
+      # iCal URL for your status calendar (required when a status target is enabled).
+      url: https://example.com/status.ics
+      # Status calendar fetch interval.
+      interval: 5m
+  targets:
+    github:
+      # GitHub personal access token (optional, enables GitHub status sync).
+      # Scopes required: user scope for status updates.
+      # token: ghp_xyz
+      token: ""
 
 availability:
-  # Disabled by default. Set to true to enable the availability API.
-  is_enabled: false
+  sources:
+    ical:
+      # Separate iCal URL for availability data.
+      url: https://example.com/availability.ics
+      # Availability calendar fetch interval.
+      interval: 5m
+
+  api:
+    # Disabled by default. Set to true to expose /api/availability.
+    is_enabled: false
+    # Exact Authorization header value required by /api/availability.
+    key: ""
+
+  targets:
+    cloudflare_pages:
+      # Disabled by default. Set to true to trigger Cloudflare Pages deploys when availability changes.
+      is_enabled: false
+      # Deploy checks are aligned to HH:01, HH:11, HH:21, ... when interval is 10m.
+      interval: 10m
+      # Cloudflare Pages build hook URL. Prefer AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK for secrets.
+      deploy_hook: ""
+
   # Weekday working hours, used to suppress availability unless it's a bank holiday.
   working_hours:
     start: "09:00"
     end: "17:50"
   # Set to true to fetch GOV.UK England-and-Wales bank holidays and lift weekday suppression on those dates.
   exclude_england_bank_holidays: true
-  # Separate iCal URL for availability data.
-  calendar_url: https://example.com/availability.ics
-  # Exact Authorization header value required by /api/availability.
-  api_key: ""
   # Ordered availability windows, checked from top to bottom.
   blocks:
     - name: All day
@@ -44,11 +64,3 @@ availability:
     - name: Evening
       start: "17:30"
       end: "22:00"
-
-build:
-  # Disabled by default. Set to true to trigger Cloudflare Pages deploys when availability changes.
-  is_enabled: false
-  # Deploy checks are aligned to HH:01, HH:11, HH:21, ... when interval is 10m.
-  interval: 10m
-  # Cloudflare Pages build hook URL. Prefer BUILD_CF_DEPLOY_HOOK for secrets.
-  cf_deploy_hook: ""
