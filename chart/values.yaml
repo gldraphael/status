@@ -24,6 +24,8 @@ env: []
   # - name: EXAMPLE_ENV_VAR
   #   value: "example-value"
   # Status env vars supported by the app:
+  # - name: STATUS_ENABLED
+  #   value: "true"
   # - name: STATUS_SOURCES_ICAL_URL
   #   value: "https://example.com/status.ics"
   # - name: STATUS_SOURCES_ICAL_INTERVAL
@@ -31,12 +33,12 @@ env: []
   # - name: STATUS_TARGETS_GITHUB_TOKEN
   #   value: "ghp_xyz"
   # Availability env vars supported by the app:
+  # - name: AVAILABILITY_ENABLED
+  #   value: "true"
   # - name: AVAILABILITY_SOURCES_ICAL_URL
   #   value: "https://example.com/availability.ics"
   # - name: AVAILABILITY_SOURCES_ICAL_INTERVAL
   #   value: "5m"
-  # - name: AVAILABILITY_API_IS_ENABLED
-  #   value: "true"
   # - name: AVAILABILITY_API_KEY
   #   value: "secret-key"
   # - name: AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START
@@ -46,8 +48,6 @@ env: []
   # - name: AVAILABILITY_SUPPRESSIONS_EXCLUDE_ENGLAND_BANK_HOLIDAYS
   #   value: "true"
   # Cloudflare Pages target env vars supported by the app:
-  # - name: AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_IS_ENABLED
-  #   value: "true"
   # - name: AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_INTERVAL
   #   value: "10m"
   # - name: AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK

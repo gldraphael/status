@@ -25,17 +25,17 @@ func chdir(t *testing.T, dir string) {
 var configEnvKeys = []string{
 	"PORT",
 	"PEBBLE_PATH",
+	"STATUS_ENABLED",
 	"STATUS_SOURCES_ICAL_URL",
 	"STATUS_SOURCES_ICAL_INTERVAL",
 	"STATUS_TARGETS_GITHUB_TOKEN",
+	"AVAILABILITY_ENABLED",
 	"AVAILABILITY_SOURCES_ICAL_URL",
 	"AVAILABILITY_SOURCES_ICAL_INTERVAL",
-	"AVAILABILITY_API_IS_ENABLED",
 	"AVAILABILITY_API_KEY",
 	"AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START",
 	"AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_END",
 	"AVAILABILITY_SUPPRESSIONS_EXCLUDE_ENGLAND_BANK_HOLIDAYS",
-	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_IS_ENABLED",
 	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_INTERVAL",
 	"AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK",
 }
@@ -71,6 +71,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Status.Sources.ICal.URL != "" {
 		t.Errorf("Status.Sources.ICal.URL: got %q, want empty", cfg.Status.Sources.ICal.URL)
 	}
+	if cfg.Status.IsEnabled {
+		t.Error("expected status to be disabled by default")
+	}
 	if cfg.Status.Sources.ICal.Interval != "5m" {
 		t.Errorf("Status.Sources.ICal.Interval: got %q, want 5m", cfg.Status.Sources.ICal.Interval)
 	}
@@ -80,6 +83,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.Availability.Sources.ICal.URL != "" {
 		t.Errorf("Availability.Sources.ICal.URL: got %q, want empty", cfg.Availability.Sources.ICal.URL)
 	}
+	if cfg.Availability.IsEnabled {
+		t.Error("expected availability to be disabled by default")
+	}
 	if cfg.Availability.Sources.ICal.Interval != "5m" {
 		t.Errorf("Availability.Sources.ICal.Interval: got %q, want 5m", cfg.Availability.Sources.ICal.Interval)
 	}
@@ -88,12 +94,6 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.Availability.Suppressions.ExcludeEnglandBankHolidays {
 		t.Error("expected bank holiday exclusion to be disabled by default")
-	}
-	if cfg.Availability.API.IsEnabled {
-		t.Error("expected availability API to be disabled by default")
-	}
-	if cfg.Availability.Targets.CloudflarePages.IsEnabled {
-		t.Error("expected Cloudflare Pages target to be disabled by default")
 	}
 	if cfg.Availability.Targets.CloudflarePages.Interval != "10m" {
 		t.Errorf("CloudflarePages.Interval: got %q, want 10m", cfg.Availability.Targets.CloudflarePages.Interval)
@@ -106,6 +106,7 @@ func TestLoad_FromEnv(t *testing.T) {
 
 	t.Setenv("PORT", "9090")
 	t.Setenv("PEBBLE_PATH", "/tmp/mydb")
+	t.Setenv("STATUS_ENABLED", "true")
 	t.Setenv("STATUS_SOURCES_ICAL_URL", "https://calendar.example.com/ical.ics")
 	t.Setenv("STATUS_SOURCES_ICAL_INTERVAL", "15m")
 	t.Setenv("STATUS_TARGETS_GITHUB_TOKEN", "gh-abc123")
@@ -123,6 +124,9 @@ func TestLoad_FromEnv(t *testing.T) {
 	if cfg.Status.Sources.ICal.URL != "https://calendar.example.com/ical.ics" {
 		t.Errorf("Status.Sources.ICal.URL: got %q", cfg.Status.Sources.ICal.URL)
 	}
+	if !cfg.Status.IsEnabled {
+		t.Fatal("expected status to be enabled from env")
+	}
 	if cfg.Status.Sources.ICal.Interval != "15m" {
 		t.Errorf("Status.Sources.ICal.Interval: got %q", cfg.Status.Sources.ICal.Interval)
 	}
@@ -135,14 +139,13 @@ func TestLoad_AvailabilityFromEnv(t *testing.T) {
 	chdir(t, t.TempDir())
 	clearConfigEnv(t)
 
+	t.Setenv("AVAILABILITY_ENABLED", "true")
 	t.Setenv("AVAILABILITY_SOURCES_ICAL_URL", "https://availability.example.com/ical.ics")
 	t.Setenv("AVAILABILITY_SOURCES_ICAL_INTERVAL", "7m")
-	t.Setenv("AVAILABILITY_API_IS_ENABLED", "true")
 	t.Setenv("AVAILABILITY_API_KEY", "secret-key")
 	t.Setenv("AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START", "08:30")
 	t.Setenv("AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_END", "17:15")
 	t.Setenv("AVAILABILITY_SUPPRESSIONS_EXCLUDE_ENGLAND_BANK_HOLIDAYS", "true")
-	t.Setenv("AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_IS_ENABLED", "true")
 	t.Setenv("AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_INTERVAL", "12m")
 	t.Setenv("AVAILABILITY_TARGETS_CLOUDFLARE_PAGES_DEPLOY_HOOK", "https://example.com/hook")
 
@@ -153,11 +156,11 @@ func TestLoad_AvailabilityFromEnv(t *testing.T) {
 	if cfg.Availability.Sources.ICal.URL != "https://availability.example.com/ical.ics" {
 		t.Errorf("Availability.Sources.ICal.URL: got %q", cfg.Availability.Sources.ICal.URL)
 	}
+	if !cfg.Availability.IsEnabled {
+		t.Fatal("expected availability to be enabled from env")
+	}
 	if cfg.Availability.Sources.ICal.Interval != "7m" {
 		t.Errorf("Availability.Sources.ICal.Interval: got %q", cfg.Availability.Sources.ICal.Interval)
-	}
-	if !cfg.Availability.API.IsEnabled {
-		t.Fatal("expected availability API to be enabled from env")
 	}
 	if cfg.Availability.API.Key != "secret-key" {
 		t.Errorf("Availability.API.Key: got %q", cfg.Availability.API.Key)
@@ -167,9 +170,6 @@ func TestLoad_AvailabilityFromEnv(t *testing.T) {
 	}
 	if !cfg.Availability.Suppressions.ExcludeEnglandBankHolidays {
 		t.Error("expected holiday exclusion to be enabled from env")
-	}
-	if !cfg.Availability.Targets.CloudflarePages.IsEnabled {
-		t.Fatal("expected Cloudflare Pages target to be enabled from env")
 	}
 	if cfg.Availability.Targets.CloudflarePages.Interval != "12m" {
 		t.Errorf("CloudflarePages.Interval: got %q", cfg.Availability.Targets.CloudflarePages.Interval)
@@ -199,6 +199,7 @@ func TestLoad_FromYAML(t *testing.T) {
 port: 7777
 pebble_path: /yaml/data
 status:
+  enabled: true
   sources:
     ical:
       url: https://yaml-cal.example.com/ical.ics
@@ -222,6 +223,9 @@ status:
 	if cfg.Status.Sources.ICal.URL != "https://yaml-cal.example.com/ical.ics" {
 		t.Errorf("Status.Sources.ICal.URL: got %q", cfg.Status.Sources.ICal.URL)
 	}
+	if !cfg.Status.IsEnabled {
+		t.Fatal("expected status to be enabled from YAML")
+	}
 	if cfg.Status.Sources.ICal.Interval != "12m" {
 		t.Errorf("Status.Sources.ICal.Interval: got %q", cfg.Status.Sources.ICal.Interval)
 	}
@@ -237,16 +241,15 @@ func TestLoad_AvailabilityFromYAML(t *testing.T) {
 
 	yaml := `
 availability:
+  enabled: true
   sources:
     ical:
       url: https://availability.example.com/ical.ics
       interval: 8m
   api:
-    is_enabled: true
     key: secret-yaml-key
   targets:
     cloudflare_pages:
-      is_enabled: true
       interval: 14m
       deploy_hook: https://example.com/hook
   suppressions:
@@ -271,11 +274,11 @@ availability:
 	if cfg.Availability.Sources.ICal.URL != "https://availability.example.com/ical.ics" {
 		t.Errorf("Availability.Sources.ICal.URL: got %q", cfg.Availability.Sources.ICal.URL)
 	}
+	if !cfg.Availability.IsEnabled {
+		t.Fatal("expected availability to be enabled from YAML")
+	}
 	if cfg.Availability.Sources.ICal.Interval != "8m" {
 		t.Errorf("Availability.Sources.ICal.Interval: got %q", cfg.Availability.Sources.ICal.Interval)
-	}
-	if !cfg.Availability.API.IsEnabled {
-		t.Fatal("expected availability API to be enabled")
 	}
 	if cfg.Availability.API.Key != "secret-yaml-key" {
 		t.Errorf("Availability.API.Key: got %q", cfg.Availability.API.Key)
@@ -285,9 +288,6 @@ availability:
 	}
 	if !cfg.Availability.Suppressions.ExcludeEnglandBankHolidays {
 		t.Error("expected holiday exclusion to be enabled from YAML")
-	}
-	if !cfg.Availability.Targets.CloudflarePages.IsEnabled {
-		t.Fatal("expected Cloudflare Pages target to be enabled")
 	}
 	if cfg.Availability.Targets.CloudflarePages.Interval != "14m" {
 		t.Errorf("CloudflarePages.Interval: got %q", cfg.Availability.Targets.CloudflarePages.Interval)
@@ -311,6 +311,7 @@ func TestLoad_EnvOverridesYAML(t *testing.T) {
 	yaml := `
 port: 7777
 status:
+  enabled: false
   sources:
     ical:
       url: https://yaml-cal.example.com/ical.ics
@@ -319,12 +320,12 @@ status:
     github:
       token: gh-yaml
 availability:
+  enabled: false
   sources:
     ical:
       url: https://yaml-availability.example.com/ical.ics
       interval: 30m
   api:
-    is_enabled: false
     key: yaml-key
   suppressions:
     working_hours:
@@ -335,12 +336,13 @@ availability:
 	writeConfigYAML(t, dir, yaml)
 
 	t.Setenv("PORT", "9999")
+	t.Setenv("STATUS_ENABLED", "true")
 	t.Setenv("STATUS_TARGETS_GITHUB_TOKEN", "gh-env")
 	t.Setenv("STATUS_SOURCES_ICAL_URL", "https://env-cal.example.com/ical.ics")
 	t.Setenv("STATUS_SOURCES_ICAL_INTERVAL", "7m")
+	t.Setenv("AVAILABILITY_ENABLED", "true")
 	t.Setenv("AVAILABILITY_SOURCES_ICAL_URL", "https://env-availability.example.com/ical.ics")
 	t.Setenv("AVAILABILITY_SOURCES_ICAL_INTERVAL", "9m")
-	t.Setenv("AVAILABILITY_API_IS_ENABLED", "true")
 	t.Setenv("AVAILABILITY_API_KEY", "env-key")
 	t.Setenv("AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_START", "08:45")
 	t.Setenv("AVAILABILITY_SUPPRESSIONS_WORKING_HOURS_END", "17:15")
@@ -356,6 +358,9 @@ availability:
 	if cfg.Status.Targets.GitHub.Token != "gh-env" {
 		t.Errorf("Status.Targets.GitHub.Token: got %q, want gh-env", cfg.Status.Targets.GitHub.Token)
 	}
+	if !cfg.Status.IsEnabled {
+		t.Fatal("expected env to enable status")
+	}
 	if cfg.Status.Sources.ICal.URL != "https://env-cal.example.com/ical.ics" {
 		t.Errorf("Status.Sources.ICal.URL: got %q, want env value", cfg.Status.Sources.ICal.URL)
 	}
@@ -365,11 +370,11 @@ availability:
 	if cfg.Availability.Sources.ICal.URL != "https://env-availability.example.com/ical.ics" {
 		t.Errorf("Availability.Sources.ICal.URL: got %q, want env value", cfg.Availability.Sources.ICal.URL)
 	}
+	if !cfg.Availability.IsEnabled {
+		t.Fatal("expected env to enable availability")
+	}
 	if cfg.Availability.Sources.ICal.Interval != "9m" {
 		t.Errorf("Availability.Sources.ICal.Interval: got %q, want env value", cfg.Availability.Sources.ICal.Interval)
-	}
-	if !cfg.Availability.API.IsEnabled {
-		t.Fatal("expected env to enable availability API")
 	}
 	if cfg.Availability.API.Key != "env-key" {
 		t.Errorf("Availability.API.Key: got %q", cfg.Availability.API.Key)
@@ -433,6 +438,7 @@ func TestLoad_MissingYAML(t *testing.T) {
 
 func validAvailabilityConfig() AvailabilityConfig {
 	return AvailabilityConfig{
+		IsEnabled: true,
 		Sources: AvailabilitySourcesConfig{
 			ICal: ICalSourceConfig{
 				URL:      "https://example.com/availability.ics",
@@ -440,8 +446,13 @@ func validAvailabilityConfig() AvailabilityConfig {
 			},
 		},
 		API: AvailabilityAPIConfig{
-			IsEnabled: true,
-			Key:       "secret",
+			Key: "secret",
+		},
+		Targets: AvailabilityTargetsConfig{
+			CloudflarePages: CloudflarePagesTargetConfig{
+				Interval:   "10m",
+				DeployHook: "https://example.com/hook",
+			},
 		},
 		Suppressions: AvailabilitySuppressionsConfig{
 			WorkingHours: AvailabilityWorkingHoursConfig{
@@ -462,31 +473,37 @@ func TestAvailabilityValidate(t *testing.T) {
 		}
 	})
 
-	t.Run("API enabled valid", func(t *testing.T) {
+	t.Run("disabled ignores incomplete config", func(t *testing.T) {
+		cfg := validAvailabilityConfig()
+		cfg.IsEnabled = false
+		cfg.Sources.ICal.URL = ""
+		cfg.API.Key = ""
+		cfg.Targets.CloudflarePages.DeployHook = ""
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
+	t.Run("enabled valid", func(t *testing.T) {
 		cfg := validAvailabilityConfig()
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("Validate: %v", err)
 		}
 	})
 
-	t.Run("Cloudflare Pages enabled valid without API key", func(t *testing.T) {
-		cfg := validAvailabilityConfig()
-		cfg.API = AvailabilityAPIConfig{}
-		cfg.Targets.CloudflarePages = CloudflarePagesTargetConfig{
-			IsEnabled:  true,
-			Interval:   "10m",
-			DeployHook: "https://example.com/hook",
-		}
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("Validate: %v", err)
-		}
-	})
-
-	t.Run("API enabled missing key", func(t *testing.T) {
+	t.Run("enabled missing API key", func(t *testing.T) {
 		cfg := validAvailabilityConfig()
 		cfg.API.Key = ""
 		if err := cfg.Validate(); err == nil {
 			t.Fatal("expected error for missing API key")
+		}
+	})
+
+	t.Run("enabled missing Cloudflare Pages deploy hook", func(t *testing.T) {
+		cfg := validAvailabilityConfig()
+		cfg.Targets.CloudflarePages.DeployHook = ""
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for missing deploy hook")
 		}
 	})
 
@@ -515,7 +532,7 @@ func TestAvailabilityValidate(t *testing.T) {
 	})
 
 	t.Run("enabled incomplete", func(t *testing.T) {
-		cfg := AvailabilityConfig{API: AvailabilityAPIConfig{IsEnabled: true}}
+		cfg := AvailabilityConfig{IsEnabled: true}
 		if err := cfg.Validate(); err == nil {
 			t.Fatal("expected error for incomplete enabled availability config")
 		}
@@ -532,9 +549,23 @@ func TestConfigValidate(t *testing.T) {
 		}
 	})
 
+	t.Run("disabled status ignores configured target", func(t *testing.T) {
+		cfg := Config{
+			Status: StatusConfig{
+				Targets: StatusTargetsConfig{
+					GitHub: GitHubTargetConfig{Token: "gh-token"},
+				},
+			},
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate: %v", err)
+		}
+	})
+
 	t.Run("status target requires status source", func(t *testing.T) {
 		cfg := Config{
 			Status: StatusConfig{
+				IsEnabled: true,
 				Sources: StatusSourcesConfig{
 					ICal: ICalSourceConfig{Interval: "5m"},
 				},
@@ -548,9 +579,27 @@ func TestConfigValidate(t *testing.T) {
 		}
 	})
 
+	t.Run("status enabled requires target", func(t *testing.T) {
+		cfg := Config{
+			Status: StatusConfig{
+				IsEnabled: true,
+				Sources: StatusSourcesConfig{
+					ICal: ICalSourceConfig{
+						URL:      "https://example.com/status.ics",
+						Interval: "5m",
+					},
+				},
+			},
+		}
+		if err := cfg.Validate(); err == nil {
+			t.Fatal("expected error for missing status target")
+		}
+	})
+
 	t.Run("status target with source", func(t *testing.T) {
 		cfg := Config{
 			Status: StatusConfig{
+				IsEnabled: true,
 				Sources: StatusSourcesConfig{
 					ICal: ICalSourceConfig{
 						URL:      "https://example.com/status.ics",
@@ -593,23 +642,8 @@ func TestICalSourceIntervalDuration(t *testing.T) {
 }
 
 func TestCloudflarePagesTargetValidateAndIntervalDuration(t *testing.T) {
-	t.Run("disabled", func(t *testing.T) {
-		cfg := CloudflarePagesTargetConfig{}
-		if err := cfg.Validate(); err != nil {
-			t.Fatalf("Validate: %v", err)
-		}
-		dur, err := cfg.IntervalDuration()
-		if err != nil {
-			t.Fatalf("IntervalDuration: %v", err)
-		}
-		if dur != 0 {
-			t.Fatalf("duration: got %v, want 0", dur)
-		}
-	})
-
-	t.Run("enabled valid", func(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
 		cfg := CloudflarePagesTargetConfig{
-			IsEnabled:  true,
 			Interval:   "10m",
 			DeployHook: "https://example.com/hook",
 		}
@@ -627,7 +661,6 @@ func TestCloudflarePagesTargetValidateAndIntervalDuration(t *testing.T) {
 
 	t.Run("interval too short", func(t *testing.T) {
 		cfg := CloudflarePagesTargetConfig{
-			IsEnabled:  true,
 			Interval:   "30s",
 			DeployHook: "https://example.com/hook",
 		}
@@ -638,8 +671,7 @@ func TestCloudflarePagesTargetValidateAndIntervalDuration(t *testing.T) {
 
 	t.Run("missing hook", func(t *testing.T) {
 		cfg := CloudflarePagesTargetConfig{
-			IsEnabled: true,
-			Interval:  "10m",
+			Interval: "10m",
 		}
 		if err := cfg.Validate(); err == nil {
 			t.Fatal("expected error for missing deploy hook")
